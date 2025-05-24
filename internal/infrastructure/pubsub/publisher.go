@@ -24,8 +24,8 @@ func (p *gcpPublisher) Publish(msg domain.Message) error {
 
 	topic := client.Topic(p.topicID)
 	result := topic.Publish(ctx, &pubsub.Message{
-		Data:       msg.Data,
-		Attributes: msg.Attributes,
+		Data:       msg.Payload,
+		Attributes: msg.Metadata,
 	})
 
 	_, err = result.Get(ctx)

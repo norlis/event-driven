@@ -17,7 +17,7 @@ func NewSubscription(subID string) *gcpSubscription {
 	return &gcpSubscription{subID: subID}
 }
 
-func (s *gcpSubscription) Start(ctx context.Context, handler func(domain.Message)) error {
+func (s *gcpSubscription) Start(ctx context.Context, handler func(*domain.Message)) error {
 	client, err := pubsub.NewClient(ctx, "proteccion-davinci-iaas")
 	if err != nil {
 		return err
@@ -33,11 +33,6 @@ func (s *gcpSubscription) Start(ctx context.Context, handler func(domain.Message
 
 	return sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		log.Printf("[Receive] Attributes: %v", m.Attributes)
-		handler(domain.Message{
-			ID:         m.ID,
-			Attributes: m.Attributes,
-			Data:       m.Data,
-		})
-		m.Ack()
+		handler(domain.NewMessage(m.ID, m.Data, m.Attributes))
 	})
 }

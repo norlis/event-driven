@@ -2,22 +2,23 @@ package router
 
 import (
 	"context"
-	"encoding/json"
 	"event-router/internal/domain"
 	"event-router/internal/usecase/worker"
 	"log"
+	"reflect"
 )
 
 type Filter interface {
-	Match(msg domain.Message) bool
+	Match(msg *domain.Message) bool
 }
 
-type HandlerFunc func(data interface{}) error
+type HandlerFunc func(data any) (any, error)
 
 type Route struct {
-	Pub     domain.Publisher
-	Filter  Filter
-	Handler HandlerFunc
+	Pub        domain.Publisher
+	Filter     Filter
+	Handler    HandlerFunc
+	ObjectType any
 }
 
 type Router struct {
@@ -37,34 +38,42 @@ func New(sub domain.Subscription) *Router {
 }
 
 // Register adds a route for the current Subscription source.
-func (r *Router) Register(pub domain.Publisher, filter Filter, handler HandlerFunc) {
+func (r *Router) Register(pub domain.Publisher, filter Filter, objectType any, handler HandlerFunc) {
 	r.routes = append(r.routes, Route{
-		Pub:     pub,
-		Filter:  filter,
-		Handler: handler,
+		Pub:        pub,
+		Filter:     filter,
+		Handler:    handler,
+		ObjectType: objectType,
 	})
 }
 
 // Run starts the Subscription and processes all registered routes.
 func (r *Router) Run(ctx context.Context) error {
-	return r.sub.Start(ctx, func(msg domain.Message) {
+	return r.sub.Start(ctx, func(msg *domain.Message) {
 		for _, rt := range r.routes {
 			// Aplica el filtro solo si está definido
 			if rt.Filter != nil && !rt.Filter.Match(msg) {
 				continue
 			}
 
-			var payload interface{}
-			if err := json.Unmarshal(msg.Data, &payload); err != nil {
+			// var payload any
+			event, err := NewInterface(reflect.TypeOf(rt.ObjectType), msg.Payload)
+			if err != nil {
 				log.Printf("[Router] Error unmarshaling payload: %v", err)
+				msg.Nack()
 				continue
 			}
+			// if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			// 	log.Printf("[Router] Error unmarshaling payload: %v", err)
+			// 	msg.Nack()
+			// 	continue
+			// }
 
 			job := worker.Job{
 				Msg:       msg,
 				Publisher: rt.Pub,
-				Handler: func(msg domain.Message) error {
-					return rt.Handler(payload)
+				Handler: func(msg *domain.Message) (any, error) {
+					return rt.Handler(event)
 				},
 			}
 

@@ -15,9 +15,9 @@ func NewFilter(expr string) *jmesFilter {
 	return &jmesFilter{expr: expr}
 }
 
-func (f *jmesFilter) Match(msg domain.Message) bool {
+func (f *jmesFilter) Match(msg *domain.Message) bool {
 	var data map[string]interface{}
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
+	if err := json.Unmarshal(msg.Payload, &data); err != nil {
 		return false
 	}
 
