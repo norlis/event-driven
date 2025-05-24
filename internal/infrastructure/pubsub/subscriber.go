@@ -2,37 +2,66 @@ package pubsub
 
 import (
 	"context"
+	"errors"
 	"event-router/internal/domain"
-	"log"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/pubsub"
+	"go.uber.org/zap"
 )
 
-type gcpSubscription struct {
-	subID string
+type SubscriberConfig struct {
+	ProjectID              string
+	SubscriptionID         string
+	MaxOutstandingMessages int
+	MaxOutstandingBytes    int
+	NumGoroutines          int
+	MaxExtension           time.Duration
 }
 
-func NewSubscription(subID string) *gcpSubscription {
-	return &gcpSubscription{subID: subID}
+type GCPSubscription struct {
+	client *pubsub.Client
+	cfg    SubscriberConfig
+	logger *zap.Logger
 }
 
-func (s *gcpSubscription) Start(ctx context.Context, handler func(*domain.Message)) error {
-	client, err := pubsub.NewClient(ctx, "proteccion-davinci-iaas")
-	if err != nil {
-		return err
+func NewSubscription(client *pubsub.Client, cfg SubscriberConfig, logger *zap.Logger) *GCPSubscription {
+	return &GCPSubscription{
+		client: client,
+		cfg:    cfg,
+		logger: logger,
 	}
+}
 
-	sub := client.Subscription(s.subID)
+func (s *GCPSubscription) Start(ctx context.Context, handler func(msg *domain.Message)) error {
+	sub := s.client.Subscription(s.cfg.SubscriptionID)
 
-	// TODO: vars
-	sub.ReceiveSettings.MaxOutstandingMessages = 100
-	sub.ReceiveSettings.MaxOutstandingBytes = 10 * 1024 * 1024 // 10MB
-	sub.ReceiveSettings.NumGoroutines = 10
-	sub.ReceiveSettings.MaxExtension = 60 * time.Second
+	sub.ReceiveSettings.MaxOutstandingMessages = s.cfg.MaxOutstandingMessages
+	sub.ReceiveSettings.MaxOutstandingBytes = s.cfg.MaxOutstandingBytes
+	sub.ReceiveSettings.NumGoroutines = s.cfg.NumGoroutines
+	sub.ReceiveSettings.MaxExtension = s.cfg.MaxExtension
 
-	return sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
-		log.Printf("[Receive] Attributes: %v", m.Attributes)
-		handler(domain.NewMessage(m.ID, m.Data, m.Attributes))
+	s.logger.Info("Iniciando recepción de mensajes Pub/Sub",
+		zap.String("subscriptionID", s.cfg.SubscriptionID),
+		zap.Int("maxOutstandingMessages", sub.ReceiveSettings.MaxOutstandingMessages),
+		zap.Int("numGoroutines", sub.ReceiveSettings.NumGoroutines),
+	)
+
+	// sub.Receive es bloqueante. Se ejecutará hasta que ctx sea cancelado o ocurra un error fatal.
+	err := sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
+		s.logger.Debug("Mensaje Pub/Sub recibido", zap.String("messageID", m.ID), zap.Any("attributes", m.Attributes))
+
+		// Envolver el mensaje de pubsub.Message en domain.Message,
+		// pasando las funciones Ack/Nack del mensaje original.
+		domainMsg := domain.NewMessage(m.ID, m.Data, m.Attributes, m.Ack, m.Nack)
+		handler(domainMsg)
 	})
+
+	if err != nil && !errors.Is(err, context.Canceled) {
+		s.logger.Error("Error en Pub/Sub Receive", zap.Error(err), zap.String("subscriptionID", s.cfg.SubscriptionID))
+		return fmt.Errorf("sub.Receive para %s falló: %w", s.cfg.SubscriptionID, err)
+	}
+	s.logger.Info("Recepción de mensajes Pub/Sub detenida", zap.String("subscriptionID", s.cfg.SubscriptionID))
+	return nil
 }

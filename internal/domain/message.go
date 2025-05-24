@@ -12,21 +12,21 @@ type Message struct {
 	Metadata map[string]string
 	Payload  []byte
 
-	ack    chan struct{}
-	noAck  chan struct{}
+	ack    func()
+	nack   func()
 	once   sync.Once
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
-func NewMessage(uuid string, payload []byte, attrs map[string]string) *Message {
+func NewMessage(uuid string, payload []byte, attrs map[string]string, ackFn, nackFn func()) *Message {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Message{
 		UUID:     uuid,
 		Payload:  payload,
 		Metadata: attrs,
-		ack:      make(chan struct{}),
-		noAck:    make(chan struct{}),
+		ack:      ackFn,
+		nack:     nackFn,
 		ctx:      ctx,
 		cancel:   cancel,
 	}
@@ -39,7 +39,9 @@ func (m *Message) Context() context.Context {
 // Ack indica que el mensaje fue procesado exitosamente
 func (m *Message) Ack() {
 	m.once.Do(func() {
-		close(m.ack)
+		if m.ack != nil {
+			m.ack()
+		}
 		m.cancel()
 	})
 }
@@ -47,17 +49,9 @@ func (m *Message) Ack() {
 // Nack indica que el procesamiento del mensaje falló
 func (m *Message) Nack() {
 	m.once.Do(func() {
-		close(m.noAck)
+		if m.nack != nil {
+			m.nack()
+		}
 		m.cancel()
 	})
-}
-
-// Acked retorna un canal que se cierra cuando se llama Ack()
-func (m *Message) Acked() <-chan struct{} {
-	return m.ack
-}
-
-// Nacked retorna un canal que se cierra cuando se llama Nack()
-func (m *Message) Nacked() <-chan struct{} {
-	return m.noAck
 }
