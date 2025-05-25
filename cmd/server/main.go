@@ -7,9 +7,11 @@ import (
 	"event-router/internal/infrastructure/jmspath"
 	"event-router/internal/infrastructure/pubsub"
 	"event-router/internal/logger"
+	"event-router/internal/otelsetup"
 	"event-router/internal/usecase/router"
 	"event-router/internal/usecase/worker"
 	"fmt"
+	"go.opentelemetry.io/otel"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,12 +24,17 @@ import (
 
 // handler1 es un ejemplo de manejador de eventos específico.
 func handler1(ctx context.Context, data domain.Event[domain.Account], logger *zap.Logger) (any, error) {
+
+	tracer := otel.Tracer("event-router-clean/handler1")      // Usar un nombre de instrumentación
+	handlerCtx, span := tracer.Start(ctx, "handler1.Process") // Crear un span hijo
+	defer span.End()
+
 	// Usar el contexto del mensaje si es necesario: data.Msg.Context()
 	// O el contexto global pasado al handler si se prefiere.
 	select {
-	case <-ctx.Done():
+	case <-handlerCtx.Done():
 		logger.Warn("[CuentasBancarias Handler] Contexto cancelado antes de procesar", zap.String("eventId", data.Header.EventId))
-		return nil, ctx.Err()
+		return nil, handlerCtx.Err()
 	default:
 		// Continuar procesamiento
 	}
@@ -67,6 +74,13 @@ func main() {
 
 	appLogger.Info("Iniciando Event Router Example...")
 
+	//// 1. Configuración de OpenTelemetry
+	//// Usar localhost para Tempo que corre en Docker. Docker en Mac/Windows podría necesitar "host.docker.internal"
+	//// o la IP de la máquina host en lugar de "localhost" si la app Go no corre en Docker.
+	//// Si tu app Go también corre en Docker en la misma red que Tempo, usa "tempo:4317".
+	////tempoEndpoint := getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "localhost:4317")
+	tempoEndpoint := "localhost:4317"
+
 	// 2. Configuración de la Aplicación (ejemplo desde variables de entorno o hardcodeado para el ejemplo)
 	// ESTO DEBERÍA VENIR DE VARIABLES DE ENTORNO O ARCHIVOS DE CONFIGURACIÓN EN PRODUCCIÓN
 	// gcpProjectID := os.Getenv("GCP_PROJECT_ID")
@@ -83,6 +97,21 @@ func main() {
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	defer rootCancel()
+
+	otelShutdown, err := otelsetup.InitTracerProvider(rootCtx, "event-router-service", "1.0.0", tempoEndpoint, appLogger.Named("otelsetup"))
+	if err != nil {
+		appLogger.Fatal("Fallo al inicializar proveedor de trazas OTel", zap.Error(err))
+	}
+	defer func() {
+		appLogger.Info("Ejecutando apagado de OpenTelemetry...")
+		if err := otelShutdown(rootCtx); err != nil { // Usar rootCtx para el apagado también
+			appLogger.Error("Error apagando proveedor de trazas OTel", zap.Error(err))
+		}
+		appLogger.Info("Apagado de OpenTelemetry completado.")
+	}()
+
+	// Obtener un tracer global o específico para la instrumentación principal
+	//tracer := otel.Tracer("event-router-clean/main") // "instrumentation library name"
 
 	psClient, err := gcp.NewClient(rootCtx, gcpProjectID)
 	if err != nil {
@@ -106,14 +135,14 @@ func main() {
 	}
 	eventSubscription := pubsub.NewSubscription(psClient, subscriberCfg, appLogger.Named("pubsub_subscriber"))
 
-	// Configuración del Dispatcher de Workers
+	// Configuration del Dispatcher de Workers
 	dispatcherCfg := worker.DispatcherConfig{
 		NumWorkers: 10, // Configurable
 		QueueSize:  20, // Configurable
 	}
 	eventDispatcher := worker.NewDispatcher(dispatcherCfg, appLogger.Named("worker_dispatcher"))
 
-	// Configuración del Router
+	// Configuration del Router
 	routerCfg := router.Config{
 		Subscription:     eventSubscription,
 		WorkerDispatcher: eventDispatcher,
