@@ -7,10 +7,33 @@ This project implements an event routing system using Google Cloud Pub/Sub and t
 ## Architecture Overview
 
 - `cmd/server/main.go`: Entry point that registers routes and starts the application.
-- `internal/domain`: Interfaces for Subscription, Publisher, and the message model.
-- `internal/usecase/router`: Core routing logic including filters and handler dispatching.
-- `internal/infrastructure/pubsub`: Pub/Sub-specific Subscriber and Publisher implementations.
-- `internal/infrastructure/jmspath`: Logic to filter messages using JMESPath.
+- `pkg/domain`: Interfaces for Subscription, Publisher, and the message model.
+- `pkg/usecase/router`: Core routing logic including filters and handler dispatching.
+- `pkg/infrastructure/pubsub`: Pub/Sub-specific Subscriber and Publisher implementations.
+- `pkg/infrastructure/jmspath`: Logic to filter messages using JMESPath.
+
+```
+
+├── go.mod
+├── go.sum
+├── domain/
+│   ├── message.go
+│   └── ...
+├── infrastructure/
+│   ├── pubsub/
+│   │   ├── publisher.go
+│   │   └── subscriber.go
+│   └── jmspathfilter/
+│       └── filter.go
+├── router/
+│   ├── router.go
+│   └── ...
+├── worker/
+│   ├── worker.go
+│   └── dispatcher.go
+└── logger/ // (decidir incluirlo en la librería)
+└── otelsetup/ // (decidir incluirlo en la librería)
+```
 
 ## Flow Diagram
 
@@ -25,4 +48,12 @@ flowchart TD
     CallHandler -->|Returns Publisher| Publish["Publish to Publisher"]
     CallHandler -->|Returns nil| Done["No action"]
     Publish --> Done
+```
+
+
+## Versioning
+
+```shell
+VERSION=v0.1.0
+git tag "${VERSION}" && git push origin "${VERSION}"
 ```

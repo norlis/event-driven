@@ -1,4 +1,4 @@
-module event-router
+module github.com/norlis/event-driven
 
 // module github.com/norlis/event-driven
 

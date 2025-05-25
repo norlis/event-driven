@@ -2,8 +2,8 @@ package router
 
 import (
 	"context"
-	"event-router/pkg/domain"
-	"event-router/pkg/usecase/worker"
+	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"reflect"
 
 	"go.uber.org/zap"

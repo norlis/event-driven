@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"errors"
-	"event-router/pkg/domain"
-	"event-router/pkg/infrastructure/jmspath"
-	"event-router/pkg/infrastructure/pubsub"
-	"event-router/pkg/logger"
-	"event-router/pkg/otelsetup"
-	"event-router/pkg/usecase/router"
-	"event-router/pkg/usecase/worker"
 	"fmt"
+	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/infrastructure/jmspath"
+	"github.com/norlis/event-driven/pkg/infrastructure/pubsub"
+	"github.com/norlis/event-driven/pkg/logger"
+	"github.com/norlis/event-driven/pkg/otelsetup"
+	"github.com/norlis/event-driven/pkg/usecase/router"
+	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.opentelemetry.io/otel"
 	"os"
 	"os/signal"
@@ -83,13 +83,11 @@ func main() {
 
 	// 2. Configuración de la Aplicación (ejemplo desde variables de entorno o hardcodeado para el ejemplo)
 	// ESTO DEBERÍA VENIR DE VARIABLES DE ENTORNO O ARCHIVOS DE CONFIGURACIÓN EN PRODUCCIÓN
-	// gcpProjectID := os.Getenv("GCP_PROJECT_ID")
-	gcpProjectID := "proteccion-davinci-iaas"
+	gcpProjectID := os.Getenv("GCP_PROJECT_ID")
 	if gcpProjectID == "" {
 		appLogger.Fatal("Variable de entorno GCP_PROJECT_ID no establecida.")
 	}
-	// subID := os.Getenv("PUBSUB_SUBSCRIPTION_ID") // ej: "s-apolo-replica-go-qa"
-	subID := "s-apolo-replica-go-qa"
+	subID := os.Getenv("PUBSUB_SUBSCRIPTION_ID") // ej: "s-apolo-replica-go-qa"
 	if subID == "" {
 		appLogger.Fatal("Variable de entorno PUBSUB_SUBSCRIPTION_ID no establecida.")
 	}

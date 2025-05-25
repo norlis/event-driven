@@ -3,8 +3,8 @@ package pubsub
 import (
 	"context"
 	"errors"
-	"event-router/pkg/domain"
 	"fmt"
+	"github.com/norlis/event-driven/pkg/domain"
 	"time"
 
 	"cloud.google.com/go/pubsub"

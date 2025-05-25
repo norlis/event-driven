@@ -1,7 +1,7 @@
 package worker
 
 import (
-	"event-router/pkg/domain"
+	"github.com/norlis/event-driven/pkg/domain"
 	"sync"
 
 	"go.uber.org/zap"

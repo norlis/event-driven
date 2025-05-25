@@ -2,7 +2,7 @@ package worker
 
 import (
 	"errors"
-	"event-router/pkg/domain"
+	"github.com/norlis/event-driven/pkg/domain"
 	"sync"
 	"testing"
 	"time"

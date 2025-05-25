@@ -2,8 +2,8 @@ package pubsub
 
 import (
 	"context"
-	"event-router/pkg/domain"
 	"fmt"
+	"github.com/norlis/event-driven/pkg/domain"
 
 	"cloud.google.com/go/pubsub"
 	"go.uber.org/zap"
