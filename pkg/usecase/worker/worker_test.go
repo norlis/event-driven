@@ -2,7 +2,7 @@ package worker
 
 import (
 	"errors"
-	"event-router/internal/domain"
+	"event-router/pkg/domain"
 	"sync"
 	"testing"
 	"time"

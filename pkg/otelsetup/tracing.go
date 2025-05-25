@@ -1,16 +1,5 @@
 package otelsetup
 
-//import (
-//	"fmt"
-//	"go.opentelemetry.io/otel"
-//	"go.opentelemetry.io/otel/propagation"
-//	"go.opentelemetry.io/otel/sdk/resource"
-//	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-//	"go.uber.org/zap"
-//	"google.golang.org/grpc"
-//	"google.golang.org/grpc/credentials/insecure"
-//)
-
 import (
 	"context"
 	"fmt"

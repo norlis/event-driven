@@ -1,7 +1,7 @@
 package worker
 
 import (
-	"event-router/internal/domain"
+	"event-router/pkg/domain"
 	"sync"
 
 	"go.uber.org/zap"

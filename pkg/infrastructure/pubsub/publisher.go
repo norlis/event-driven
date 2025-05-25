@@ -2,7 +2,7 @@ package pubsub
 
 import (
 	"context"
-	"event-router/internal/domain"
+	"event-router/pkg/domain"
 	"fmt"
 
 	"cloud.google.com/go/pubsub"

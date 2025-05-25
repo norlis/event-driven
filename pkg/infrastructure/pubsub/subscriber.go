@@ -3,7 +3,7 @@ package pubsub
 import (
 	"context"
 	"errors"
-	"event-router/internal/domain"
+	"event-router/pkg/domain"
 	"fmt"
 	"time"
 

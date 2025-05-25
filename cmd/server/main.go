@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"event-router/internal/domain"
-	"event-router/internal/infrastructure/jmspath"
-	"event-router/internal/infrastructure/pubsub"
-	"event-router/internal/logger"
-	"event-router/internal/otelsetup"
-	"event-router/internal/usecase/router"
-	"event-router/internal/usecase/worker"
+	"event-router/pkg/domain"
+	"event-router/pkg/infrastructure/jmspath"
+	"event-router/pkg/infrastructure/pubsub"
+	"event-router/pkg/logger"
+	"event-router/pkg/otelsetup"
+	"event-router/pkg/usecase/router"
+	"event-router/pkg/usecase/worker"
 	"fmt"
 	"go.opentelemetry.io/otel"
 	"os"
@@ -75,7 +75,7 @@ func main() {
 	appLogger.Info("Iniciando Event Router Example...")
 
 	//// 1. Configuración de OpenTelemetry
-	//// Usar localhost para Tempo que corre en Docker. Docker en Mac/Windows podría necesitar "host.docker.internal"
+	//// Usar localhost para Tempo que corre en Docker. Docker en Mac/Windows podría necesitar "host.docker.pkg"
 	//// o la IP de la máquina host en lugar de "localhost" si la app Go no corre en Docker.
 	//// Si tu app Go también corre en Docker en la misma red que Tempo, usa "tempo:4317".
 	////tempoEndpoint := getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "localhost:4317")

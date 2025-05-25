@@ -2,7 +2,7 @@ package jmspath
 
 import (
 	"encoding/json"
-	"event-router/internal/domain"
+	"event-router/pkg/domain"
 
 	"github.com/jmespath/go-jmespath"
 	"go.uber.org/zap"
