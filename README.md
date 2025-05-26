@@ -57,3 +57,13 @@ flowchart TD
 VERSION=v0.1.1
 git tag "${VERSION}" && git push origin "${VERSION}"
 ```
+
+## Consideraciones de rendimiento 
+
+- Pub/Sub `MaxOutstandingMessages` (`Dispatcher QueueSize + Dispatcher NumWorkers`) y `NumGoroutines` (en `SubscriberConfig` de `messaging.NewSubscription`):
+  - `MaxOutstandingMessages`: El número máximo de mensajes que la librería cliente de Pub/Sub mantendrá en memoria sin haberles hecho ACK/NACK. Si tu `JobQueue` se llena, y el `Router` Nackea mensajes, estos volverán a contar contra este límite eventualmente.
+  - `NumGoroutines` (en `ReceiveSettings` del cliente Pub/Sub, que messaging.NewSubscription debería usar): Controla cuántas goroutines usa la librería cliente para recibir mensajes y llamar a tu callback (el que tienes en Router.Run). Un valor demasiado bajo aquí será un cuello de botella antes de que los mensajes lleguen a tu `JobQueue`.
+
+- Dispatcher `NumWorkers` y `QueueSize` (en `DispatcherConfig`):
+  - `NumWorkers`: Tu capacidad de procesamiento real.
+  - `QueueSize`: Un buffer para absorber picos de mensajes.

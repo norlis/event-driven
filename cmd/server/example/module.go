@@ -106,9 +106,9 @@ func NewAppSubscription(psClient *pubsub.Client, configuration *Configuration, l
 	subscriberCfg := messaging.SubscriberConfig{
 		ProjectID:              configuration.Cloud.GCloudProjectId,
 		SubscriptionID:         configuration.Messaging.SubscribeDestination,
-		MaxOutstandingMessages: 100,
+		MaxOutstandingMessages: 120, // NumWorkers + QueueSize
 		NumGoroutines:          10,
-		MaxExtension:           30 * time.Second,
+		MaxExtension:           60 * time.Second,
 	}
 	return messaging.NewSubscription(psClient, subscriberCfg, logger.Named("app-subscription"))
 }
@@ -117,9 +117,9 @@ func NewTraceSubscription(psClient *pubsub.Client, configuration *Configuration,
 	subscriberCfg := messaging.SubscriberConfig{
 		ProjectID:              configuration.Cloud.GCloudProjectId,
 		SubscriptionID:         configuration.Messaging.SubscribeTrace,
-		MaxOutstandingMessages: 100,
+		MaxOutstandingMessages: 120, // NumWorkers + QueueSize
 		NumGoroutines:          10,
-		MaxExtension:           30 * time.Second,
+		MaxExtension:           60 * time.Second,
 	}
 	return messaging.NewSubscription(psClient, subscriberCfg, logger.Named("trace-subscription"))
 }
@@ -146,12 +146,15 @@ func NewWorkerDispatcher(lc fx.Lifecycle, logger *zap.Logger) *worker.Dispatcher
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			d.Run(ctx)
+			go d.Run(context.Background())
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
 			logger.Info("Deteniendo Worker Dispatcher...")
 			d.Stop()
+			if ctx.Err() != nil { // Verifica si el contexto del hook Fx ya expiró
+				logger.Warn(">>> HOOK: NewWorkerDispatcher OnStop - Contexto del hook Fx (stopCtx) expiró.", zap.Error(ctx.Err()))
+			}
 			return nil
 		},
 	})

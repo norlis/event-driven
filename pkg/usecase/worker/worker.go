@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"context"
+	"errors"
 	"github.com/norlis/event-driven/pkg/domain"
 	"sync"
 
@@ -9,7 +11,7 @@ import (
 
 type Job struct {
 	Msg       *domain.Message
-	Handler   func(*domain.Message) (any, error)
+	Handler   func(context.Context, *domain.Message) (any, error)
 	Publisher domain.Publisher
 }
 
@@ -19,6 +21,7 @@ type Worker struct {
 	Quit     chan struct{}
 	Wg       *sync.WaitGroup
 	logger   *zap.Logger
+	stopOnce sync.Once
 }
 
 func NewWorker(id int, jobQueue <-chan Job, wg *sync.WaitGroup, logger *zap.Logger) *Worker {
@@ -31,44 +34,78 @@ func NewWorker(id int, jobQueue <-chan Job, wg *sync.WaitGroup, logger *zap.Logg
 	}
 }
 
-func (w *Worker) Start() {
-	w.Wg.Add(1) // Incrementar contador para el WaitGroup del dispatcher
+func (w *Worker) Start(workerEnded chan<- int) {
+	w.Wg.Add(1)
 	go func() {
-		defer w.Wg.Done() // Decrementar contador cuando la goroutine termina
+		defer func() {
+			w.logger.Info("WORKER: Goroutine terminando, llamando a Wg.Done()")
+			w.Wg.Done()
+			workerEnded <- w.ID
+		}()
+
+		defer func() { // Este defer es para el recover
+			if r := recover(); r != nil {
+				w.logger.Error(
+					"WORKER ENTRO EN PANICO RECUPERADO",
+					zap.Any("reason", r),
+				)
+			}
+		}()
+
 		w.logger.Info("Worker iniciado")
 		for {
+			w.logger.Debug("Worker esperando en select")
 			select {
 			case job, ok := <-w.JobQueue:
 				if !ok {
 					w.logger.Info("JobQueue cerrado, worker deteniéndose")
 					return
 				}
-				w.logger.Debug("Procesando mensaje", zap.String("messageUUID", job.Msg.UUID))
+				w.logger.Info("Procesando mensaje", zap.String("messageUUID", job.Msg.UUID))
 
-				// Aquí se podría usar el contexto del mensaje: job.Msg.Context()
-				// si el handler o el publisher necesitan ser conscientes de la cancelación del mensaje.
-				data, err := job.Handler(job.Msg) // El resultado del handler se ignora por ahora
+				handlerCtx, cancelHandler := context.WithCancel(context.Background())
+				handlerDone := make(chan struct{})
+				go func() {
+					defer close(handlerDone)
+					select {
+					case <-w.Quit:
+						w.logger.Info("Señal Quit recibida por el worker, cancelando handler en curso", zap.String("messageUUID", job.Msg.UUID))
+						cancelHandler()
+					case <-handlerCtx.Done():
+						// No es necesario hacer nada más aquí, solo salir de esta goroutine.
+					}
+				}()
+
+				data, err := job.Handler(handlerCtx, job.Msg)
+
+				if handlerCtx.Err() == nil { // Si el contexto no fue previamente cancelado
+					cancelHandler()
+				}
+
+				<-handlerDone
+
 				if err != nil {
-					w.logger.Error("Error en el manejador del worker", zap.Error(err), zap.String("messageUUID", job.Msg.UUID))
-					job.Msg.Nack() // Nack en caso de error del handler
+					w.logger.Error(
+						"Error en el handler del worker",
+						zap.Error(err), zap.String("messageUUID", job.Msg.UUID),
+						zap.Bool("Canceled", errors.Is(err, context.Canceled)),
+					)
+					job.Msg.Nack()
 				} else {
 					job.Msg.Ack() // Ack si el handler fue exitoso
 				}
 
 				// Publicar el mensaje original si hay un publisher.
-				// Considerar si se debe publicar el resultado del handler en lugar del mensaje original.
 				if job.Publisher != nil && data != nil {
-					// Crear un nuevo domain.Message si se quiere publicar el resultado del handler.
-					// Por ahora, se publica el mensaje original como estaba antes.
 					if pubErr := job.Publisher.Publish(job.Msg); pubErr != nil {
 						w.logger.Error("Error publicando mensaje después del handler", zap.Error(pubErr), zap.String("messageUUID", job.Msg.UUID))
-						// Decidir si un fallo en la publicación debe causar Nack del mensaje original
+						// TODO: Decidir si un fallo en la publicación debe causar Nack del mensaje original
 						// si no se ha hecho Ack/Nack aún (actualmente ya se hizo).
 					}
 				}
 
 			case <-w.Quit:
-				w.logger.Info("Worker recibiendo señal de quit, deteniéndose")
+				w.logger.Info("WORKER: recibiendo señal de quit, deteniéndose")
 				return
 			}
 		}
@@ -76,6 +113,9 @@ func (w *Worker) Start() {
 }
 
 func (w *Worker) Stop() {
-	w.logger.Debug("Enviando señal de stop al worker")
-	close(w.Quit) // Cerrar el canal para señalar la detención
+	w.logger.Info("WORKER: Stop() llamado")
+	w.stopOnce.Do(func() {
+		w.logger.Debug("WORKER: Stop() (stopOnce) - Cerrando Quit chan", zap.Int("workerID", w.ID))
+		close(w.Quit)
+	})
 }

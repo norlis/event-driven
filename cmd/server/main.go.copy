@@ -2,16 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/norlis/event-driven/pkg/domain"
 	"github.com/norlis/event-driven/pkg/infrastructure/jmspath"
 	"github.com/norlis/event-driven/pkg/infrastructure/pubsub"
 	"github.com/norlis/event-driven/pkg/logger"
 	"github.com/norlis/event-driven/pkg/otelsetup"
 	"github.com/norlis/event-driven/pkg/usecase/router"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
-	"go.opentelemetry.io/otel"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,35 +22,35 @@ import (
 )
 
 // handler1 es un ejemplo de manejador de eventos específico.
-func handler1(ctx context.Context, data domain.Event[domain.Account], logger *zap.Logger) (any, error) {
+func handler1(ctx context.Context, data map[string]any, logger *zap.Logger) (json.RawMessage, error) {
 
-	tracer := otel.Tracer("event-router-clean/handler1")      // Usar un nombre de instrumentación
-	handlerCtx, span := tracer.Start(ctx, "handler1.Process") // Crear un span hijo
-	defer span.End()
+	//tracer := otel.Tracer("event-router-clean/handler1")      // Usar un nombre de instrumentación
+	//handlerCtx, span := tracer.Start(ctx, "handler1.Process") // Crear un span hijo
+	//defer span.End()
+	//
+	//// Usar el contexto del mensaje si es necesario: data.Msg.Context()
+	//// O el contexto global pasado al handler si se prefiere.
+	//select {
+	//case <-handlerCtx.Done():
+	//	logger.Warn("[CuentasBancarias Handler] Contexto cancelado antes de procesar", zap.String("eventId", data.Header.EventId))
+	//	return nil, handlerCtx.Err()
+	//default:
+	//	// Continuar procesamiento
+	//}
 
-	// Usar el contexto del mensaje si es necesario: data.Msg.Context()
-	// O el contexto global pasado al handler si se prefiere.
-	select {
-	case <-handlerCtx.Done():
-		logger.Warn("[CuentasBancarias Handler] Contexto cancelado antes de procesar", zap.String("eventId", data.Header.EventId))
-		return nil, handlerCtx.Err()
-	default:
-		// Continuar procesamiento
-	}
-
-	logger.Info("[CuentasBancarias Handler] Procesando evento", zap.String("eventId", data.Header.EventId), zap.Any("body", data.Body))
+	logger.Info("[CuentasBancarias Handler] Procesando evento", zap.Any("event", data))
 	// Simular trabajo
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(10 * time.Second)
 	return nil, nil // El 'any' retornado podría ser usado para una publicación posterior
 }
 
 // wrapHandlerForRouter adapta un handler con dependencias (como logger) al HandlerFunc del router.
 func wrapHandlerForRouter[T any](
-	actualHandler func(ctx context.Context, data T, logger *zap.Logger) (any, error),
+	actualHandler func(ctx context.Context, data T, logger *zap.Logger) (json.RawMessage, error),
 	appCtx context.Context, // Contexto de la aplicación para el handler
 	logger *zap.Logger,
 ) router.HandlerFunc {
-	return func(data any) (any, error) {
+	return func(ctx context.Context, data any) (json.RawMessage, error) {
 		castedData, ok := data.(T)
 		if !ok {
 			return nil, errors.New("tipo de datos inesperado en el manejador envuelto")
@@ -87,9 +86,9 @@ func main() {
 	if gcpProjectID == "" {
 		appLogger.Fatal("Variable de entorno GCP_PROJECT_ID no establecida.")
 	}
-	subID := os.Getenv("PUBSUB_SUBSCRIPTION_ID") // ej: "s-apolo-replica-go-qa"
+	subID := os.Getenv("EVT_APP_SUBSCRIPTION") // ej:
 	if subID == "" {
-		appLogger.Fatal("Variable de entorno PUBSUB_SUBSCRIPTION_ID no establecida.")
+		appLogger.Fatal("Variable de entorno  EVT_APP_SUBSCRIPTION no establecida.")
 	}
 	// topicIDTrace := "t-apolo-trace-qa" // Si se necesitara un publicador
 
@@ -159,7 +158,7 @@ func main() {
 	eventRouter.Register(
 		nil, // Sin publicador para esta ruta por ahora
 		eventFilter,
-		domain.Event[domain.Account]{}, // Tipo de objeto esperado para esta ruta
+		map[string]any{}, // Tipo de objeto esperado para esta ruta
 		wrappedHandler1,
 	)
 

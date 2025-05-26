@@ -5,16 +5,15 @@ import (
 	"encoding/json"
 	"github.com/norlis/event-driven/pkg/domain"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
-	"reflect"
-
 	"go.uber.org/zap"
+	"reflect"
 )
 
 type Filter interface {
 	Match(msg *domain.Message) bool
 }
 
-type HandlerFunc func(data any) (json.RawMessage, error)
+type HandlerFunc func(ctx context.Context, data any) (json.RawMessage, error)
 
 type Route struct {
 	Pub        domain.Publisher
@@ -71,7 +70,7 @@ func (r *Router) Run(ctx context.Context) error {
 		for _, rt := range r.routes {
 			if rt.Filter != nil && !rt.Filter.Match(msg) {
 				r.cfg.Logger.Debug("Mensaje no coincide con el filtro para una ruta", zap.String("messageUUID", msg.UUID))
-				continue // Saltar esta ruta si el filtro no coincide
+				continue
 			}
 			matchedAtLeastOneRoute = true
 			r.cfg.Logger.Debug("Mensaje coincide con filtro (o no hay filtro), procesando ruta...", zap.String("messageUUID", msg.UUID))
@@ -86,17 +85,15 @@ func (r *Router) Run(ctx context.Context) error {
 				// Considerar si se debe Nackear el mensaje aquí o si es un error de configuración de ruta.
 				// Si es un error de payload, Nack es apropiado.
 				msg.Nack()
-				continue // Saltar al siguiente mensaje o ruta si esta falla
+				continue
 			}
 
 			// Crear un trabajo para el worker.
 			job := worker.Job{
 				Msg:       msg,
 				Publisher: rt.Pub, // Publisher asociado a esta ruta
-				Handler: func(processedMsg *domain.Message) (any, error) {
-					// El 'processedMsg' aquí es el mismo 'msg' original,
-					// pero el handler de la ruta espera el 'eventPayload' desempaquetado.
-					return rt.Handler(eventPayload)
+				Handler: func(ctx context.Context, processedMsg *domain.Message) (any, error) {
+					return rt.Handler(ctx, eventPayload)
 				},
 			}
 
@@ -107,21 +104,21 @@ func (r *Router) Run(ctx context.Context) error {
 				r.cfg.Logger.Debug("Trabajo enviado al dispatcher", zap.String("messageUUID", msg.UUID))
 			case <-ctx.Done():
 				r.cfg.Logger.Warn("Contexto cancelado, no se pudo enviar trabajo al dispatcher", zap.String("messageUUID", msg.UUID))
-				msg.Nack() // Si no se puede encolar por apagado, Nack.
-				return     // Salir del handler de suscripción
+				msg.Nack()
+				return
+				// enlocar
+				//case <-time.After(5 *time.Second): // Timeout para encolar
+				//	r.cfg.Logger.Warn("Timeout esperando para enviar trabajo al JobQueue (cola llena o workers lentos)",
+				//		zap.String("messageUUID", msg.UUID),
+				//		zap.Duration("timeout", 5 *time.Second))
+				//	msg.Nack()
 			}
-			// Una vez que un trabajo se encola para una ruta que coincide, podríamos romper el bucle de rutas
-			// si un mensaje solo debe ser manejado por la primera ruta coincidente.
-			// O continuar si un mensaje puede disparar múltiples rutas.
-			// Por ahora, continúa (un mensaje puede activar múltiples rutas si los filtros coinciden).
+
 		}
 
 		if !matchedAtLeastOneRoute {
 			r.cfg.Logger.Debug("Mensaje no coincidió con ninguna ruta", zap.String("messageUUID", msg.UUID))
-			// Decidir qué hacer con mensajes que no coinciden con ninguna ruta.
-			// Podría ser Ack (ignorar), Nack (reintentar, podría ser problemático), o enviar a una DLQ.
-			// Por seguridad y para evitar bucles de Nack, Ack es a menudo una opción si no hay DLQ.
-			msg.Ack() // Opcional: Ack si no hay rutas coincidentes, para evitar que quede en la cola.
+			msg.Ack() // Ack si no hay rutas coincidentes, para evitar que quede en la cola.
 		}
 	})
 }

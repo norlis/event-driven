@@ -1,12 +1,14 @@
 package example
 
 import (
+	"context"
 	"encoding/json"
 	"go.uber.org/zap"
+	"time"
 )
 
 type UseCaseExample interface {
-	Execute(event map[string]any) (json.RawMessage, error)
+	Execute(ctx context.Context, event map[string]any) (json.RawMessage, error)
 }
 
 func NewHandler(logger *zap.Logger) UseCaseExample {
@@ -17,7 +19,7 @@ type handler struct {
 	logger *zap.Logger
 }
 
-func (h *handler) Execute(event map[string]any) (json.RawMessage, error) {
+func (h *handler) Execute(ctx context.Context, event map[string]any) (json.RawMessage, error) {
 
 	/*
 		tracer := otel.Tracer("event-router-clean/handler1")      // Usar un nombre de instrumentación
@@ -37,7 +39,23 @@ func (h *handler) Execute(event map[string]any) (json.RawMessage, error) {
 		logger.Info("[CuentasBancarias Handler] Procesando evento", zap.String("eventId", data.Header.EventId), zap.Any("body", data.Body))
 
 	*/
-	h.logger.Info("Processing event", zap.Any("event", event))
 
-	return []byte(`ok`), nil
+	select {
+	case <-time.After(15 * time.Second):
+		h.logger.Info("Processing event", zap.Any("event", event))
+		return []byte(`{"success": true}`), nil
+	case <-ctx.Done():
+		h.logger.Info("HANDLER: Sleep interrumpido por cancelación de contexto")
+		return nil, ctx.Err()
+	}
+
+	//time.Sleep(15 * time.Second)
+	//h.logger.Info("Processing event", zap.Any("event", event))
+	//
+	//return []byte(`{"success": true}`), nil
+
+	//err := errors.New("ErrValidate")
+	//h.logger.Error("ErrValidate", zap.Error(err))
+	//
+	//return nil, errors.New("no data")
 }
