@@ -54,6 +54,6 @@ flowchart TD
 ## Versioning
 
 ```shell
-VERSION=v0.1.0
+VERSION=v0.1.1
 git tag "${VERSION}" && git push origin "${VERSION}"
 ```

@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/norlis/event-driven/pkg/domain"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"reflect"
@@ -13,7 +14,7 @@ type Filter interface {
 	Match(msg *domain.Message) bool
 }
 
-type HandlerFunc func(data any) (any, error)
+type HandlerFunc func(data any) (json.RawMessage, error)
 
 type Route struct {
 	Pub        domain.Publisher

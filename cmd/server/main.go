@@ -2,8 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"github.com/norlis/event-driven/pkg/domain"
 	"github.com/norlis/event-driven/pkg/infrastructure/jmspath"
 	"github.com/norlis/event-driven/pkg/infrastructure/pubsub"
@@ -12,18 +18,18 @@ import (
 	"github.com/norlis/event-driven/pkg/usecase/router"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.opentelemetry.io/otel"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	gcp "cloud.google.com/go/pubsub" // Cliente Pub/Sub de GCP
 
 	"go.uber.org/zap"
 )
 
+var GCloudProjectId = os.Getenv("GCP_PROJECT_ID")
+var SubscribeDestination = os.Getenv("PUBSUB_SUBSCRIPTION_ID")
+var PublishTraceTopic = os.Getenv("PUBLISH_TRACE_TOPIC")
+
 // handler1 es un ejemplo de manejador de eventos específico.
-func handler1(ctx context.Context, data domain.Event[domain.Account], logger *zap.Logger) (any, error) {
+func handler1(ctx context.Context, data domain.Event[domain.Account], logger *zap.Logger) (json.RawMessage, error) {
 
 	tracer := otel.Tracer("event-router-clean/handler1")      // Usar un nombre de instrumentación
 	handlerCtx, span := tracer.Start(ctx, "handler1.Process") // Crear un span hijo
@@ -42,16 +48,16 @@ func handler1(ctx context.Context, data domain.Event[domain.Account], logger *za
 	logger.Info("[CuentasBancarias Handler] Procesando evento", zap.String("eventId", data.Header.EventId), zap.Any("body", data.Body))
 	// Simular trabajo
 	time.Sleep(100 * time.Millisecond)
-	return nil, nil // El 'any' retornado podría ser usado para una publicación posterior
+	return []byte(`ok`), nil // El 'any' retornado podría ser usado para una publicación posterior
 }
 
 // wrapHandlerForRouter adapta un handler con dependencias (como logger) al HandlerFunc del router.
 func wrapHandlerForRouter[T any](
-	actualHandler func(ctx context.Context, data T, logger *zap.Logger) (any, error),
+	actualHandler func(ctx context.Context, data T, logger *zap.Logger) (json.RawMessage, error),
 	appCtx context.Context, // Contexto de la aplicación para el handler
 	logger *zap.Logger,
 ) router.HandlerFunc {
-	return func(data any) (any, error) {
+	return func(data any) (json.RawMessage, error) {
 		castedData, ok := data.(T)
 		if !ok {
 			return nil, errors.New("tipo de datos inesperado en el manejador envuelto")
@@ -83,12 +89,10 @@ func main() {
 
 	// 2. Configuración de la Aplicación (ejemplo desde variables de entorno o hardcodeado para el ejemplo)
 	// ESTO DEBERÍA VENIR DE VARIABLES DE ENTORNO O ARCHIVOS DE CONFIGURACIÓN EN PRODUCCIÓN
-	gcpProjectID := os.Getenv("GCP_PROJECT_ID")
-	if gcpProjectID == "" {
+	if GCloudProjectId == "" {
 		appLogger.Fatal("Variable de entorno GCP_PROJECT_ID no establecida.")
 	}
-	subID := os.Getenv("PUBSUB_SUBSCRIPTION_ID") // ej: "s-apolo-replica-go-qa"
-	if subID == "" {
+	if SubscribeDestination == "" {
 		appLogger.Fatal("Variable de entorno PUBSUB_SUBSCRIPTION_ID no establecida.")
 	}
 	// topicIDTrace := "t-apolo-trace-qa" // Si se necesitara un publicador
@@ -111,7 +115,7 @@ func main() {
 	// Obtener un tracer global o específico para la instrumentación principal
 	//tracer := otel.Tracer("event-router-clean/main") // "instrumentation library name"
 
-	psClient, err := gcp.NewClient(rootCtx, gcpProjectID)
+	psClient, err := gcp.NewClient(rootCtx, GCloudProjectId)
 	if err != nil {
 		appLogger.Fatal("Fallo al crear cliente Pub/Sub", zap.Error(err))
 	}
@@ -125,8 +129,8 @@ func main() {
 	// 4. Configurar y Crear Componentes de la Librería
 	// Configuración del Suscriptor Pub/Sub
 	subscriberCfg := pubsub.SubscriberConfig{
-		ProjectID:              gcpProjectID,
-		SubscriptionID:         subID,
+		ProjectID:              GCloudProjectId,
+		SubscriptionID:         SubscribeDestination,
 		MaxOutstandingMessages: 50, // Configurable
 		NumGoroutines:          10, // Configurable
 		MaxExtension:           60 * time.Second,
