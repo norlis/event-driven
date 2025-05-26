@@ -1,6 +1,7 @@
 package middlewares
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/norlis/event-driven/pkg/usecase/router"
 	"github.com/pkg/errors"
@@ -28,16 +29,14 @@ func NewIgnoreErrors(errs []error) IgnoreErrors {
 //				validations.ErrInvalidValidations,
 //			}).Middleware
 func (i IgnoreErrors) Middleware(next router.HandlerFunc) router.HandlerFunc {
-	return func(msg any) (json.RawMessage, error) {
-		events, err := next(msg)
+	return func(ctx context.Context, msg any) (json.RawMessage, error) {
+		events, err := next(ctx, msg)
 		if err != nil {
 			if _, ok := i.ignoredErrors[errors.Cause(err).Error()]; ok {
 				return events, nil
 			}
-
 			return events, err
 		}
-
 		return events, nil
 	}
 }
