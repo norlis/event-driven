@@ -30,8 +30,9 @@ type Config struct {
 }
 
 type Router struct {
-	cfg    Config
-	routes []Route
+	cfg         Config
+	routes      []Route
+	middlewares []Middleware
 }
 
 // New creates a new Router for a given Subscription source (PubSub, HTTP, etc.)
@@ -88,12 +89,14 @@ func (r *Router) Run(ctx context.Context) error {
 				continue
 			}
 
+			effectiveHandler := chainMiddlewares(rt.Handler, r.middlewares...)
+
 			// Crear un trabajo para el worker.
 			job := worker.Job{
 				Msg:       msg,
 				Publisher: rt.Pub, // Publisher asociado a esta ruta
 				Handler: func(ctx context.Context, processedMsg *domain.Message) (any, error) {
-					return rt.Handler(ctx, eventPayload)
+					return effectiveHandler(ctx, eventPayload)
 				},
 			}
 
@@ -121,4 +124,18 @@ func (r *Router) Run(ctx context.Context) error {
 			msg.Ack() // Ack si no hay rutas coincidentes, para evitar que quede en la cola.
 		}
 	})
+}
+
+func (r *Router) Use(middlewares ...Middleware) {
+	r.middlewares = append(r.middlewares, middlewares...)
+}
+
+// chainMiddlewares aplica una cadena de middlewares a un handler.
+// Los middlewares se aplican en orden inverso (el último añadido es el más externo).
+func chainMiddlewares(handler HandlerFunc, mws ...Middleware) HandlerFunc {
+	chainedHandler := handler
+	for i := len(mws) - 1; i >= 0; i-- {
+		chainedHandler = mws[i](chainedHandler)
+	}
+	return chainedHandler
 }

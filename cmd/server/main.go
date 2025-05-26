@@ -2,8 +2,6 @@ package main
 
 import (
 	"cloud.google.com/go/pubsub"
-	"context"
-	"errors"
 	"fmt"
 	"github.com/norlis/event-driven/cmd/server/example"
 	"github.com/norlis/event-driven/pkg/domain"
@@ -64,40 +62,6 @@ func main() {
 		),
 		fx.Provide(example.NewHandler),
 		fx.Invoke(example.RegisterEventHandlers),
-		fx.Invoke(func(lc fx.Lifecycle, routers example.RouterParams, disp *worker.Dispatcher, logger *zap.Logger) {
-			lc.Append(fx.Hook{
-				OnStart: func(ctx context.Context) error {
-					logger.Info("Iniciando Event Router...")
-					go func() {
-						// Creamos un contexto hijo para aislar del shutdown de FX
-						childCtx, cancel := context.WithCancel(context.Background())
-						defer cancel()
-
-						if err := routers.PrincipalRouter.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
-							logger.Error("Error crítico en Event Router", zap.Error(err))
-						}
-					}()
-					return nil
-				},
-				OnStop: func(ctx context.Context) error {
-					logger.Info("Router shutdown manejado por cancelación externa.")
-					return nil
-				},
-			})
-		}),
-		//fx.Invoke(func(routers example.RouterParams, disp *worker.Dispatcher, logger *zap.Logger) {
-		//	logger.Info("Iniciando Event Router...")
-		//	go func() {
-		//		if err := routers.PrincipalRouter.Run(ctx); err != nil {
-		//			if !errors.Is(err, context.Canceled) {
-		//				logger.Error("Error crítico en Event Router", zap.Error(err))
-		//			} else {
-		//				logger.Info("Event Router Run cancelado como se esperaba.")
-		//			}
-		//		}
-		//		logger.Info("Event Router Run ha terminado.")
-		//	}()
-		//}),
 	)
 
 	if err := app.Err(); err != nil {

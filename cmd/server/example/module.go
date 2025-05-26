@@ -3,6 +3,7 @@ package example
 import (
 	"cloud.google.com/go/pubsub"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/norlis/event-driven/pkg/domain"
 	messaging "github.com/norlis/event-driven/pkg/infrastructure/pubsub"
@@ -162,13 +163,32 @@ func NewWorkerDispatcher(lc fx.Lifecycle, logger *zap.Logger) *worker.Dispatcher
 }
 
 // NewPrincipalRouter Provider para el Router
-func NewPrincipalRouter(params EventParams, subs SubscriptionParams) *router.Router {
+func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.Router {
 	routerCfg := router.Config{
 		Subscription:     subs.AppSubscription,
 		WorkerDispatcher: params.Dispatcher,
 		Logger:           params.Logger.Named("pubsub-router-principal"),
 	}
-	return router.New(routerCfg)
+	r := router.New(routerCfg)
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			logger.Info("Iniciando Event Router...")
+			go func() {
+				childCtx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
+				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("Error crítico en Event Router", zap.Error(err))
+				}
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			logger.Info("Router shutdown manejado por cancelación externa.")
+			return nil
+		},
+	})
+	return r
 }
 
 // NewTraceRouter Provider para el Router
