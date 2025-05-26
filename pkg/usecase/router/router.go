@@ -62,12 +62,8 @@ func (r *Router) Register(pub domain.Publisher, filter Filter, objectType any, h
 }
 
 // Run starts the Subscription and processes all registered routes.
-// Run inicia la suscripción y comienza a procesar mensajes a través de las rutas registradas.
-// Es una operación bloqueante hasta que el contexto es cancelado o la suscripción falla.
 func (r *Router) Run(ctx context.Context) error {
 	r.cfg.Logger.Info("Router iniciando, comenzando suscripción...")
-	// El WorkerDispatcher.Run() debe ser llamado por el código que configura el Router.
-	// Aquí solo usamos el JobQueue del dispatcher.
 
 	return r.cfg.Subscription.Start(ctx, func(msg *domain.Message) {
 		r.cfg.Logger.Debug("Router recibió mensaje de la suscripción", zap.String("messageUUID", msg.UUID))

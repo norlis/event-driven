@@ -33,7 +33,7 @@ func TestWrapHandler(t *testing.T) {
 		{
 			name:        "Correct type, no error",
 			input:       MyData{ID: "123"},
-			expectedOut: "processed: 123",
+			expectedOut: []byte("processed: 123"),
 			expectErr:   false,
 		},
 		{
