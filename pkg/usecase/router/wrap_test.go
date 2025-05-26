@@ -1,6 +1,7 @@
 package router
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -10,11 +11,11 @@ type MyData struct {
 	ID string
 }
 
-func mySpecificHandler(data MyData) (any, error) {
+func mySpecificHandler(data MyData) (json.RawMessage, error) {
 	if data.ID == "error" {
 		return nil, errors.New("handler error")
 	}
-	return "processed: " + data.ID, nil
+	return []byte("processed: " + data.ID), nil
 }
 
 func TestWrapHandler(t *testing.T) {
