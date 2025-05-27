@@ -6,36 +6,53 @@ This project implements an event routing system using Google Cloud Pub/Sub and t
 
 ## Architecture Overview
 
-- `cmd/server/main.go`: Entry point that registers routes and starts the application.
-- `pkg/domain`: Interfaces for Subscription, Publisher, and the message model.
-- `pkg/usecase/router`: Core routing logic including filters and handler dispatching.
-- `pkg/infrastructure/pubsub`: Pub/Sub-specific Subscriber and Publisher implementations.
-- `pkg/infrastructure/jmspath`: Logic to filter messages using JMESPath.
-
 ```
-
 ├── go.mod
 ├── go.sum
-├── domain/
-│   ├── message.go
-│   └── ...
-├── infrastructure/
-│   ├── pubsub/
+├── cmd/
+│   └── server/
+│       ├── main.go                 # Punto de entrada, configuración de Fx, gestión del ciclo de vida
+│       └── example/                # Módulo específico de la aplicación de ejemplo
+│           ├── module.go           # Providers de Fx, configuración de componentes
+│           ├── events.go           # Registro de rutas y middlewares específicos
+│           ├── handlers.go         # Implementación de los UseCase (lógica de negocio)
+│           ├── configuration.go    # Structs y carga de configuración
+│           └── middlewares.go      # (Opcional) Middlewares específicos de este ejemplo
+├── pkg/
+│   ├── domain/                     # Interfaces y tipos principales del negocio
+│   │   ├── message.go
 │   │   ├── publisher.go
-│   │   └── subscriber.go
-│   └── jmspathfilter/
-│       └── filter.go
-├── router/
-│   ├── router.go
-│   └── ...
-├── worker/
-│   ├── worker.go
-│   └── dispatcher.go
-└── logger/ // (decidir incluirlo en la librería)
-└── otelsetup/ // (decidir incluirlo en la librería)
+│   │   └── subscription.go
+│   │   └── errors.go
+│   ├── infrastructure/             # Implementaciones concretas de interfaces de dominio
+│   │   ├── pubsub/                 # Lógica de Pub/Sub
+│   │   │   ├── publisher.go
+│   │   │   └── subscriber.go
+│   │   └── jmspath/                # Lógica de JMESPath
+│   │       └── filter.go
+│   ├── usecase/                    # Lógica de aplicación y orquestación
+│   │   ├── router/
+│   │   │   ├── router.go           # Lógica central del router, registro de rutas
+│   │   │   ├── middleware.go       # Definición de Middleware y helpers
+│   │   │   ├── wrap.go             # Adaptadores para handlers
+│   │   │   ├── cast.go             # Ayudantes para conversión de tipos
+│   │   │   └── middlewares/        # (Opcional) Middlewares genéricos reutilizables
+│   │   │       └── ignore_errors.go
+│   │   └── worker/
+│   │       ├── dispatcher.go
+│   │       └── worker.go
+│   ├── logger/                     # (Opcional, si es una librería compartida)
+│   │   └── logger.go
+│   ├── otelsetup/                  # (Opcional, si es una librería compartida)
+│   │   └── tracing.go
+│   └── httpclient/                 # (Añadido basado en discusiones recientes)
+│       └── client.go
+├── deployments/                    # Archivos de despliegue (Docker, K8s, etc.)
+└── tools/                          # Herramientas de desarrollo y CI/CD
+
 ```
 
-## Flow Diagram
+### Flow Diagram
 
 **version compacta**
 ```mermaid
