@@ -172,8 +172,18 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 	}
 	r := router.New(routerCfg)
 
+	//r.Use(
+	//	middlewares.NewIgnoreErrors(
+	//		logger, ErrInvalidObject, ErrDataNotFound,)
+	//	.Middleware,
+	//)
+
 	r.Use(
-		middlewares.NewIgnoreErrors(logger, ErrInvalidObject, ErrDataNotFound).Middleware,
+		middlewares.NewIgnoreErrors(
+			logger,
+			middlewares.IgnoreSpecificError("ErrInvalidObject", ErrInvalidObject),
+			middlewares.IgnoreSpecificError("ErrDataNotFound", ErrDataNotFound),
+		).Middleware,
 	)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
