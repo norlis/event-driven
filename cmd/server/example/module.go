@@ -9,6 +9,7 @@ import (
 	messaging "github.com/norlis/event-driven/pkg/infrastructure/pubsub"
 	"github.com/norlis/event-driven/pkg/logger"
 	"github.com/norlis/event-driven/pkg/usecase/router"
+	"github.com/norlis/event-driven/pkg/usecase/router/middlewares"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -170,6 +171,10 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 		Logger:           params.Logger.Named("pubsub-router-principal"),
 	}
 	r := router.New(routerCfg)
+
+	r.Use(
+		middlewares.NewIgnoreErrors(logger, ErrInvalidObject, ErrDataNotFound).Middleware,
+	)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			logger.Info("Iniciando Event Router...")

@@ -3,9 +3,13 @@ package example
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go.uber.org/zap"
 	"time"
 )
+
+var ErrInvalidObject = errors.New("objeto inválido")
+var ErrDataNotFound = errors.New("datos no encontrados pero no es crítico")
 
 type UseCaseExample interface {
 	Execute(ctx context.Context, event map[string]any) (json.RawMessage, error)
@@ -43,7 +47,7 @@ func (h *handler) Execute(ctx context.Context, event map[string]any) (json.RawMe
 	select {
 	case <-time.After(15 * time.Second):
 		h.logger.Info("Processing event", zap.Any("event", event))
-		return []byte(`{"success": true}`), nil
+		return []byte(`{"success": true}`), ErrInvalidObject
 	case <-ctx.Done():
 		h.logger.Info("HANDLER: Sleep interrumpido por cancelación de contexto")
 		return nil, ctx.Err()
