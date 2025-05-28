@@ -82,7 +82,10 @@ func (r *Router) Run(ctx context.Context) error {
 				r.cfg.Logger.Error("Error al desempaquetar payload para la ruta",
 					zap.Error(err),
 					zap.String("messageUUID", msg.UUID),
-					zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()))
+					zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
+					zap.Any("event", msg.Payload),
+				)
+
 				// Considerar si se debe Nackear el mensaje aquí o si es un error de configuración de ruta.
 				// Si es un error de payload, Nack es apropiado.
 				msg.Nack()
