@@ -76,7 +76,6 @@ func (r *Router) Run(ctx context.Context) error {
 			matchedAtLeastOneRoute = true
 			r.cfg.Logger.Debug("Mensaje coincide con filtro (o no hay filtro), procesando ruta...", zap.String("messageUUID", msg.UUID))
 
-			// Deserializar el payload al tipo de objeto especificado para la ruta.
 			eventPayload, err := NewInterface(reflect.TypeOf(rt.ObjectType), msg.Payload)
 			if err != nil {
 				r.cfg.Logger.Error("Error al desempaquetar payload para la ruta",
@@ -85,20 +84,16 @@ func (r *Router) Run(ctx context.Context) error {
 					zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
 					zap.Any("event", msg.Payload),
 				)
-
-				// Considerar si se debe Nackear el mensaje aquí o si es un error de configuración de ruta.
-				// Si es un error de payload, Nack es apropiado.
 				msg.Nack()
 				continue
 			}
 
 			effectiveHandler := chainMiddlewares(rt.Handler, r.middlewares...)
 
-			// Crear un trabajo para el worker.
 			job := worker.Job{
 				Msg:       msg,
-				Publisher: rt.Pub, // Publisher asociado a esta ruta
-				Handler: func(ctx context.Context, processedMsg *domain.Message) (any, error) {
+				Publisher: rt.Pub,
+				Handler: func(ctx context.Context, processedMsg *domain.Message) (json.RawMessage, error) {
 					return effectiveHandler(ctx, eventPayload)
 				},
 			}
