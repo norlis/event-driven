@@ -9,6 +9,7 @@ toolchain go1.23.9
 require (
 	cloud.google.com/go/pubsub v1.49.0
 	github.com/jmespath/go-jmespath v0.4.0
+	github.com/pkg/errors v0.9.1
 	go.opentelemetry.io/otel v1.36.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.36.0
 	go.opentelemetry.io/otel/sdk v1.36.0

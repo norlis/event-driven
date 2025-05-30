@@ -10,10 +10,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var dummy = func() {
-	// dummy ack / nack
-}
-
 type Job struct {
 	Msg       *domain.Message
 	Handler   func(context.Context, *domain.Message) (json.RawMessage, error)
@@ -81,6 +77,7 @@ func (w *Worker) Start(workerEnded chan<- int) {
 					}
 				}()
 
+				// TODO change data to domain.Message
 				data, err := job.Handler(handlerCtx, job.Msg)
 
 				if handlerCtx.Err() == nil { // Si el contexto no fue previamente cancelado
@@ -103,7 +100,7 @@ func (w *Worker) Start(workerEnded chan<- int) {
 				// Publicar el mensaje original si hay un publisher.
 
 				if job.Publisher != nil && data != nil {
-					if pubErr := job.Publisher.Publish(domain.NewMessage(job.Msg.UUID, data, make(map[string]string), dummy, dummy)); pubErr != nil {
+					if pubErr := job.Publisher.Publish(domain.NewNewMessageWithoutAck(job.Msg.UUID, data, make(map[string]string))); pubErr != nil {
 						w.logger.Error("Error publicando mensaje después del handler", zap.Error(pubErr), zap.String("messageUUID", job.Msg.UUID))
 						// TODO: Decidir si un fallo en la publicación debe causar Nack del mensaje original
 						// si no se ha hecho Ack/Nack aún (actualmente ya se hizo).

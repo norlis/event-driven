@@ -5,6 +5,10 @@ import (
 	"sync"
 )
 
+var dummy = func() {
+	// dummy ack / nack
+}
+
 type Payload []byte
 
 type Message struct {
@@ -17,6 +21,10 @@ type Message struct {
 	once   sync.Once
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+func NewNewMessageWithoutAck(uuid string, payload []byte, attrs map[string]string) *Message {
+	return NewMessage(uuid, payload, attrs, dummy, dummy)
 }
 
 func NewMessage(uuid string, payload []byte, attrs map[string]string, ackFn, nackFn func()) *Message {

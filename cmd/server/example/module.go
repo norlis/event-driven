@@ -184,6 +184,7 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 			middlewares.IgnoreSpecificError("ErrInvalidObject", ErrInvalidObject),
 			middlewares.IgnoreSpecificError("ErrDataNotFound", ErrDataNotFound),
 		).Middleware,
+		middlewares.Recoverer,
 	)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
