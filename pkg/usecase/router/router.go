@@ -102,7 +102,7 @@ func (r *Router) Run(ctx context.Context) error {
 			// Esto podría bloquear si la cola está llena. Considerar select con ctx.Done().
 			select {
 			case r.cfg.WorkerDispatcher.JobQueue <- job:
-				r.cfg.Logger.Info("Trabajo enviado al dispatcher", zap.String("messageUUID", msg.UUID))
+				r.cfg.Logger.Debug("Trabajo enviado al dispatcher", zap.String("messageUUID", msg.UUID))
 			case <-ctx.Done():
 				r.cfg.Logger.Warn("Contexto cancelado, no se pudo enviar trabajo al dispatcher", zap.String("messageUUID", msg.UUID))
 				msg.Nack()
