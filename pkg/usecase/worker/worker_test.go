@@ -29,9 +29,10 @@ func TestWorker_Start_ProcessJobAndAck(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start() // Inicia la goroutine del worker
+	workerInstance.Start(workerEnded) // Inicia la goroutine del worker
 
 	handlerCalled := false
 	mockMsgAckCalled := false
@@ -76,9 +77,10 @@ func TestWorker_Start_ProcessJobAndNackOnError(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	handlerCalled := false
 	mockMsgAckCalled := false
@@ -122,9 +124,10 @@ func TestWorker_Start_ProcessJobAndPublish(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	mockPub := &mockWorkerPublisher{}
 	mockMsgAckCalled := false
@@ -159,9 +162,10 @@ func TestWorker_Stop(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job) // No buffer, para que el worker bloquee si no hay quit
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	workerInstance.Stop() // Enviar señal de quit
 
@@ -185,9 +189,10 @@ func TestWorker_JobQueueClosed(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	close(jobQueue) // Cerrar la cola de trabajos
 
