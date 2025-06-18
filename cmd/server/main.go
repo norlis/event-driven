@@ -1,14 +1,21 @@
 package main
 
 import (
+	"log"
+	"net/http"
+
 	"cloud.google.com/go/pubsub"
-	"fmt"
 	"github.com/norlis/event-driven/cmd/server/example"
 	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/health"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
-	"log"
+)
+
+var (
+	GitHash string
+	Date    string
 )
 
 type AppComponents struct {
@@ -32,8 +39,15 @@ func main() {
 		//fx.StopTimeout(120*time.Second),
 		fx.Provide(example.NewConfigurationExample),
 		fx.Provide(example.NewLogger),
+		fx.Provide(example.NewHttpServer),
 		//fx.Provide(example.NewOpenTelemetry),
 		fx.Provide(example.NewPubSubClient),
+		fx.Provide(
+			fx.Annotate(
+				example.NewHttpSubscriber,
+				fx.ResultTags(`name:"HttpSubscription"`),
+			),
+		),
 		fx.Provide(
 			fx.Annotate(
 				example.NewAppSubscription,
@@ -60,12 +74,26 @@ func main() {
 				fx.ResultTags(`name:"TraceRouter"`),
 			),
 		),
+		fx.Provide(
+			fx.Annotate(
+				example.NewHttpRouter,
+				fx.ResultTags(`name:"HttpRouter"`),
+			),
+		),
 		fx.Provide(example.NewHandler),
+		fx.Provide(func() *health.Status {
+			return health.NewStatus(GitHash)
+		}),
 		fx.Invoke(example.RegisterEventHandlers),
+		fx.Invoke(func(router *http.ServeMux, status *health.Status) {
+			router.Handle("GET /status", status)
+			router.Handle("GET /live", health.NewProbe(nil))
+			router.Handle("GET /ready", health.NewProbe(nil)) // listo para aceptar trafico
+		}),
 	)
 
 	if err := app.Err(); err != nil {
-		log.Panic(fmt.Sprintf("Error en la inicialización de la aplicación FX: %v\n", err))
+		log.Panicf("Error en la inicialización de la aplicación FX: %v\n", err)
 	}
 	//
 	app.Run()

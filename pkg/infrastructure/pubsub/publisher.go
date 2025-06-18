@@ -3,6 +3,7 @@ package pubsub
 import (
 	"context"
 	"fmt"
+
 	"github.com/norlis/event-driven/pkg/domain"
 
 	"cloud.google.com/go/pubsub"

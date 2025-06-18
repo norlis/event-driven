@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/norlis/event-driven/pkg/usecase/router"
 	"runtime/debug"
+
+	"github.com/norlis/event-driven/pkg/usecase/router"
 
 	"github.com/pkg/errors"
 )

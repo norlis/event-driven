@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/norlis/event-driven/pkg/domain"
 	"time"
+
+	"github.com/norlis/event-driven/pkg/domain"
 
 	"cloud.google.com/go/pubsub"
 	"go.uber.org/zap"
@@ -21,6 +22,8 @@ type SubscriberConfig struct {
 }
 
 type GCPSubscription struct {
+	//mu       sync.RWMutex
+	//lastPull time.Time
 	client *pubsub.Client
 	cfg    SubscriberConfig
 	logger *zap.Logger

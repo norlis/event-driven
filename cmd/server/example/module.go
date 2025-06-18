@@ -1,11 +1,16 @@
 package example
 
 import (
-	"cloud.google.com/go/pubsub"
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"cloud.google.com/go/pubsub"
 	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/infrastructure/httpdriven"
 	messaging "github.com/norlis/event-driven/pkg/infrastructure/pubsub"
 	"github.com/norlis/event-driven/pkg/logger"
 	"github.com/norlis/event-driven/pkg/usecase/router"
@@ -13,13 +18,12 @@ import (
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
-	"strings"
-	"time"
 )
 
 type SubscriptionParams struct {
 	fx.In
 
+	HttpSubscription  domain.Subscription `name:"HttpSubscription"`
 	AppSubscription   domain.Subscription `name:"AppSubscription"`
 	TraceSubscription domain.Subscription `name:"TraceSubscription"`
 }
@@ -27,6 +31,7 @@ type SubscriptionParams struct {
 type RouterParams struct {
 	fx.In
 
+	HttpRouter      *router.Router `name:"HttpRouter"`
 	PrincipalRouter *router.Router `name:"PrincipalRouter"`
 	TraceRouter     *router.Router `name:"TraceRouter"`
 }
@@ -43,7 +48,7 @@ type EventParams struct {
 
 func NewLogger(cfg *Configuration) (*zap.Logger, error) {
 	debugMode := strings.ToLower(cfg.LogLevel) == "debug"
-	l, err := logger.New(debugMode) // Asumiendo que libLogger.New existe
+	l, err := logger.New(debugMode)
 	if err != nil {
 		return nil, fmt.Errorf("fallo al crear logger: %w", err)
 	}
@@ -163,6 +168,37 @@ func NewWorkerDispatcher(lc fx.Lifecycle, logger *zap.Logger) *worker.Dispatcher
 	return d
 }
 
+func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.Router {
+	r := router.New(router.Config{
+		Subscription:     subs.HttpSubscription,
+		WorkerDispatcher: params.Dispatcher,
+		Logger:           params.Logger.Named("http-router"),
+	})
+	r.Use(middlewares.Recoverer)
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			logger.Info("stating http Event Router...")
+			go func() {
+				childCtx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
+				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("Error crítico en http Event Router", zap.Error(err))
+				}
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			logger.Info("Router shutdown manejado por cancelación externa.")
+			return nil
+		},
+	})
+
+	return r
+
+}
+
 // NewPrincipalRouter Provider para el Router
 func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.Router {
 	routerCfg := router.Config{
@@ -215,4 +251,49 @@ func NewTraceRouter(params EventParams, subs SubscriptionParams) *router.Router 
 		Logger:           params.Logger.Named("pubsub-router-trace"),
 	}
 	return router.New(routerCfg)
+}
+
+func NewHttpServer(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
+	s := http.NewServeMux()
+	server := &http.Server{
+		Addr:              ":8880",
+		Handler:           s,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			logger.Info("Iniciando servidor HTTP ")
+			go func() {
+				if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					logger.Error("Error al iniciar servidor HTTP: %v", zap.Error(err))
+				}
+			}()
+			logger.Info("Servidor HTTP escuchando en :8880")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			logger.Info("Deteniendo servidor HTTP...")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				logger.Error("Error durante el apagado del servidor HTTP: %v", zap.Error(err))
+				return err
+			}
+			logger.Info("Servidor HTTP detenido correctamente.")
+			return nil
+		},
+	})
+
+	return s
+}
+
+func NewHttpSubscriber(server *http.ServeMux, logger *zap.Logger) (domain.Subscription, error) {
+	return httpdriven.NewSubscriber(
+		server,
+		httpdriven.SubscriberConfig{
+			Pattern: "POST /command",
+			Logger:  logger.Named("http-subscriber"),
+		})
 }

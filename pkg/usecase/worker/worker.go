@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/norlis/event-driven/pkg/domain"
 	"sync"
+
+	"github.com/norlis/event-driven/pkg/domain"
 
 	"go.uber.org/zap"
 )
