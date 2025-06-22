@@ -48,6 +48,7 @@ type EventParams struct {
 
 func NewLogger(cfg *Configuration) (*zap.Logger, error) {
 	debugMode := strings.ToLower(cfg.LogLevel) == "debug"
+
 	l, err := logger.New(debugMode)
 	if err != nil {
 		return nil, fmt.Errorf("fallo al crear logger: %w", err)
@@ -253,7 +254,7 @@ func NewTraceRouter(params EventParams, subs SubscriptionParams) *router.Router 
 	return router.New(routerCfg)
 }
 
-func NewHttpServer(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
+func NewHttpServerMux(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
 	s := http.NewServeMux()
 	server := &http.Server{
 		Addr:              ":8880",
@@ -263,7 +264,7 @@ func NewHttpServer(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			logger.Info("Iniciando servidor HTTP ")
+			logger.Info("Iniciando servidor HTTP")
 			go func() {
 				if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					logger.Error("Error al iniciar servidor HTTP: %v", zap.Error(err))

@@ -1,16 +1,18 @@
 package main
 
 import (
-	"log"
-	"net/http"
-
 	"cloud.google.com/go/pubsub"
+	"context"
 	"github.com/norlis/event-driven/cmd/server/example"
 	"github.com/norlis/event-driven/pkg/domain"
 	"github.com/norlis/event-driven/pkg/health"
+	"github.com/norlis/event-driven/pkg/infrastructure/httpapi/httpmiddleware"
+	"github.com/norlis/event-driven/pkg/infrastructure/opa"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
+	"log"
+	"net/http"
 )
 
 var (
@@ -39,7 +41,8 @@ func main() {
 		//fx.StopTimeout(120*time.Second),
 		fx.Provide(example.NewConfigurationExample),
 		fx.Provide(example.NewLogger),
-		fx.Provide(example.NewHttpServer),
+		//fx.Provide(example.NewHttpServer),
+		fx.Provide(example.NewHttpServerMux),
 		//fx.Provide(example.NewOpenTelemetry),
 		fx.Provide(example.NewPubSubClient),
 		fx.Provide(
@@ -85,17 +88,67 @@ func main() {
 			return health.NewStatus(GitHash)
 		}),
 		fx.Invoke(example.RegisterEventHandlers),
-		fx.Invoke(func(router *http.ServeMux, status *health.Status) {
-			router.Handle("GET /status", status)
-			router.Handle("GET /live", health.NewProbe(nil))
-			router.Handle("GET /ready", health.NewProbe(nil)) // listo para aceptar trafico
+		fx.Invoke(func(router *http.ServeMux, status *health.Status, logger *zap.Logger) {
+
+			opaConfig := opa.Config{
+				Query:        "data.authz.allow",
+				PoliciesPath: "policies/authz", // Directorio con authz.rego
+				DataFiles: []string{
+					//"policies/authz/whitelist.json",
+					//"policies/authz/roles.json",
+					//"policies/authz/permissions.json",
+				},
+			}
+
+			authz, err := opa.NewOpaSdkClientFromConfig(context.Background(), opaConfig, logger)
+
+			if err != nil {
+				log.Fatalf("No se pudo inicializar el cliente OPA: %v", err)
+			}
+
+			commons := []httpmiddleware.Middleware{
+				httpmiddleware.Recover(logger),
+				httpmiddleware.RequestLogger(logger),
+				httpmiddleware.Cors(),
+			}
+
+			public := httpmiddleware.Chain(commons...)
+			protected := httpmiddleware.Chain(
+				append(
+					commons,
+					[]httpmiddleware.Middleware{httpmiddleware.AuthorizationMiddleware(authz)}...,
+				)...,
+			)
+
+			//use := httpmiddleware.Chain(
+			//	httpmiddleware.Recover(logger),
+			//	httpmiddleware.RequestLogger(logger),
+			//	httpmiddleware.Cors(),
+			//	httpmiddleware.AuthorizationMiddleware(authz),
+			//)
+			base := http.NewServeMux()
+
+			base.Handle("GET /status", status)
+			base.Handle("GET /live", health.NewProbe(nil))
+			base.Handle("GET /ready", health.NewProbe(nil)) // listo para aceptar trafico
+
+			api := http.NewServeMux()
+			api.HandleFunc("GET /test", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte("api test"))
+			})
+
+			router.Handle("/", public(base))
+			router.Handle("/api/", protected(http.StripPrefix("/api", api)))
+			//router.Handle("/api/", use(api))
 		}),
 	)
 
 	if err := app.Err(); err != nil {
 		log.Panicf("Error en la inicialización de la aplicación FX: %v\n", err)
 	}
-	//
+	
 	app.Run()
 
 }

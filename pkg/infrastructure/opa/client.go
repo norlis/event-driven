@@ -1,73 +1,69 @@
 package opa
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"time"
+	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/open-policy-agent/opa/rego"
+	"go.uber.org/zap"
 )
 
-// Client implementa PolicyEnforcer para comunicarse con un servidor OPA.
-type Client struct {
-	opaURL     string
-	httpClient *http.Client
+type Config struct {
+	Query        string   `yaml:"query"`
+	PoliciesPath string   `yaml:"policiesPath"`
+	DataFiles    []string `yaml:"dataFiles"` // opcional, usar si el path es diferente a policiesPath
 }
 
-// NewClient crea una nueva instancia del cliente OPA.
-// opaServerURL debe ser la URL base del servidor OPA, ej: "http://localhost:8181".
-func NewClient(opaServerURL string) *Client {
-	return &Client{
-		opaURL: opaServerURL,
-		httpClient: &http.Client{
-			Timeout: 2 * time.Second,
-		},
+type SdkClient struct {
+	preparedQuery rego.PreparedEvalQuery
+	logger        *zap.Logger
+}
+
+func NewOpaSdkClientFromConfig(ctx context.Context, cfg Config, logger *zap.Logger) (*SdkClient, error) {
+	if cfg.Query == "" || cfg.PoliciesPath == "" {
+		return nil, fmt.Errorf("la consulta y la ruta de políticas de OPA no pueden estar vacías")
 	}
-}
 
-// Estructuras para la petición y respuesta de OPA.
-type opaRequest struct {
-	Input interface{} `json:"input"`
-}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 
-type opaResponse struct {
-	Result bool `json:"result"`
-}
+	logger = logger.Named("OPA").With(zap.String("query", cfg.Query))
 
-// IsAllowed envía una consulta al endpoint de OPA para verificar si una acción está permitida.
-// El endpoint consultado se construye a partir del paquete de la política,
-// en este caso "httpapi/authz" -> /v1/data/httpapi/authz/allow
-func (c *Client) IsAllowed(ctx context.Context, input interface{}) (bool, error) {
-	// Construir la URL completa del endpoint de la política.
-	// TODO dejar como variable Reemplaza "httpapi/authz/allow" por la ruta de tu política específica.
-	endpointURL := c.opaURL + "/v1/data/httpapi/authz/allow"
+	r, err := rego.New(
+		rego.Query(cfg.Query),
+		//rego.Store(store),
+		rego.Load(append([]string{cfg.PoliciesPath}, cfg.DataFiles...), nil),
+	).PrepareForEval(ctx)
 
-	requestBody, err := json.Marshal(opaRequest{Input: input})
 	if err != nil {
-		return false, fmt.Errorf("error al serializar el input de OPA: %w", err)
+		logger.Error("Error al preparar la consulta de OPA", zap.Error(err))
+		return nil, fmt.Errorf("error al preparar la consulta de OPA: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpointURL, bytes.NewBuffer(requestBody))
+	return &SdkClient{
+		preparedQuery: r,
+		logger:        logger,
+	}, nil
+
+}
+
+// IsAllowed evalúa la política cargada con el input proporcionado.
+func (c *SdkClient) IsAllowed(ctx context.Context, input domain.PolicyInput) (bool, error) {
+	results, err := c.preparedQuery.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
-		return false, fmt.Errorf("error al crear la petición a OPA: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("error al contactar al servidor de OPA: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("el servidor de OPA devolvió un estado inesperado: %s", resp.Status)
+		return false, fmt.Errorf("error al evaluar la política de OPA: %w", err)
 	}
 
-	var opaResult opaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&opaResult); err != nil {
-		return false, fmt.Errorf("error al decodificar la respuesta de OPA: %w", err)
+	if len(results) == 0 {
+		return false, nil
 	}
 
-	return opaResult.Result, nil
+	allowed, ok := results[0].Expressions[0].Value.(bool)
+	if !ok {
+		//c.logger.Warn("not pass authz", zap.Bool("allowed", allowed), zap.Any("input", input))
+		return false, fmt.Errorf("la política de OPA no devolvió un resultado booleano")
+	}
+
+	return allowed, nil
 }

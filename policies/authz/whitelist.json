@@ -1,0 +1,9 @@
+{
+  "whitelist": [
+    "GET:/health$",
+    "POST:/status$",
+    "POST:/live$",
+    "POST:/ready$",
+    "(GET|POST):/swagger/"
+  ]
+}

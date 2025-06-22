@@ -3,6 +3,9 @@
 # description: Example package with documentation
 package authz
 
+import future.keywords.in
+import future.keywords.if
+
 default allow := false
 
 default action_allowed := false
