@@ -5,9 +5,9 @@ import (
 	"context"
 	"github.com/norlis/event-driven/cmd/server/example"
 	"github.com/norlis/event-driven/pkg/domain"
-	"github.com/norlis/event-driven/pkg/health"
-	"github.com/norlis/event-driven/pkg/infrastructure/httpapi/httpmiddleware"
-	"github.com/norlis/event-driven/pkg/infrastructure/opa"
+	"github.com/norlis/httpgate/pkg/health"
+	"github.com/norlis/httpgate/pkg/middleware"
+	"github.com/norlis/httpgate/pkg/opa"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -106,17 +106,17 @@ func main() {
 				log.Fatalf("No se pudo inicializar el cliente OPA: %v", err)
 			}
 
-			commons := []httpmiddleware.Middleware{
-				httpmiddleware.Recover(logger),
-				httpmiddleware.RequestLogger(logger),
-				httpmiddleware.Cors(),
+			commons := []middleware.Middleware{
+				middleware.Recover(logger),
+				middleware.RequestLogger(logger),
+				middleware.Cors(),
 			}
 
-			public := httpmiddleware.Chain(commons...)
-			protected := httpmiddleware.Chain(
+			public := middleware.Chain(commons...)
+			protected := middleware.Chain(
 				append(
 					commons,
-					[]httpmiddleware.Middleware{httpmiddleware.AuthorizationMiddleware(authz)}...,
+					[]middleware.Middleware{middleware.AuthorizationMiddleware(authz)}...,
 				)...,
 			)
 
@@ -148,7 +148,7 @@ func main() {
 	if err := app.Err(); err != nil {
 		log.Panicf("Error en la inicialización de la aplicación FX: %v\n", err)
 	}
-	
+
 	app.Run()
 
 }

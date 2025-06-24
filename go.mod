@@ -10,7 +10,7 @@ require (
 	cloud.google.com/go/pubsub v1.49.0
 	github.com/google/uuid v1.6.0
 	github.com/jmespath/go-jmespath v0.4.0
-	github.com/open-policy-agent/opa v1.5.1
+	github.com/norlis/httpgate v0.0.0-20250624144837-9fe9ad11ed57
 	github.com/pkg/errors v0.9.1
 	go.opentelemetry.io/otel v1.36.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.36.0
@@ -41,6 +41,7 @@ require (
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/open-policy-agent/opa v1.5.1 // indirect
 	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
