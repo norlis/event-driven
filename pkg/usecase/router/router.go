@@ -3,10 +3,11 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+
 	"github.com/norlis/event-driven/pkg/domain"
 	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/zap"
-	"reflect"
 )
 
 type Filter interface {

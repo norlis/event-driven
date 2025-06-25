@@ -4,6 +4,19 @@
 
 This project implements an event routing system using Google Cloud Pub/Sub and the Clean Architecture pattern.
 
+## Environment Variables
+
+Set the following variables to configure the example application:
+
+- `GCP_PROJECT_ID` – Google Cloud project identifier.
+- `EVT_APP_SUBSCRIPTION` – Pub/Sub subscription from which application events are received.
+- `EVT_TRACE_SUBSCRIPTION` – Pub/Sub subscription used for receiving trace messages.
+- `EVT_PUBLISH_TRACE_TOPIC` – Topic where processed trace information is published.
+
+```shell
+go run cmd/server/main.go 
+```
+
 ## Architecture Overview
 
 ```
@@ -198,3 +211,10 @@ https://medium.com/smsjunk/handling-1-million-requests-per-minute-with-golang-f7
 - Dispatcher `NumWorkers` y `QueueSize` (en `DispatcherConfig`):
   - `NumWorkers`: Tu capacidad de procesamiento real.
   - `QueueSize`: Un buffer para absorber picos de mensajes.
+
+## OPA server
+
+```shell
+opa run --server policy.rego
+
+```

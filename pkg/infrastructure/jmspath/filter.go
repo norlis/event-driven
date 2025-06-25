@@ -2,6 +2,7 @@ package jmspath
 
 import (
 	"encoding/json"
+
 	"github.com/norlis/event-driven/pkg/domain"
 
 	"github.com/jmespath/go-jmespath"
@@ -14,7 +15,10 @@ type JMESFilter struct {
 }
 
 func New(expr string, logger *zap.Logger) *JMESFilter {
-	return &JMESFilter{expr: expr}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &JMESFilter{expr: expr, logger: logger}
 }
 
 func (f *JMESFilter) Match(msg *domain.Message) bool {

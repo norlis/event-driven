@@ -1,0 +1,6 @@
+{
+  "roles": {
+    "anonymous": ["whitelist"],
+    "admin": ["super-admin"]
+  }
+}

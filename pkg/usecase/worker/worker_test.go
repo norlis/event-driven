@@ -2,10 +2,11 @@ package worker
 
 import (
 	"errors"
-	"github.com/norlis/event-driven/pkg/domain"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/norlis/event-driven/pkg/domain"
 
 	"go.uber.org/zap/zaptest"
 )

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "super-admin": ["(GET|POST|PUT|DELETE|HEAD):/.*"],
+    "whitelist": ["GET:/status", "GET:/live$", "GET:/ready$"],
+    "command.create": ["POST:/command$"]
+  }
+}
