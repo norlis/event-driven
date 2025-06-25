@@ -1,7 +1,5 @@
 module github.com/norlis/event-driven
 
-// module github.com/norlis/event-driven
-
 go 1.24.2
 
 toolchain go1.24.3
@@ -10,7 +8,7 @@ require (
 	cloud.google.com/go/pubsub v1.49.0
 	github.com/google/uuid v1.6.0
 	github.com/jmespath/go-jmespath v0.4.0
-	github.com/norlis/httpgate v0.0.0-20250624144837-9fe9ad11ed57
+	github.com/norlis/httpgate v0.1.0
 	github.com/pkg/errors v0.9.1
 	go.opentelemetry.io/otel v1.36.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.36.0

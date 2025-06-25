@@ -121,6 +121,7 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/norlis/httpgate v0.0.0-20250624144837-9fe9ad11ed57 h1:hLaFVEhBJq21Fu2ue5ZLT/BU0ZyctnNI4UQKnPuXP+E=
 github.com/norlis/httpgate v0.0.0-20250624144837-9fe9ad11ed57/go.mod h1:l82dQMLTTHt/JitKLaUNN7a3mTaZBLsnDz/hgPKkcc4=
+github.com/norlis/httpgate v0.1.0/go.mod h1:l82dQMLTTHt/JitKLaUNN7a3mTaZBLsnDz/hgPKkcc4=
 github.com/open-policy-agent/opa v1.5.1 h1:LTxxBJusMVjfs67W4FoRcnMfXADIGFMzpqnfk6D08Cg=
 github.com/open-policy-agent/opa v1.5.1/go.mod h1:bYbS7u+uhTI+cxHQIpzvr5hxX0hV7urWtY+38ZtjMgk=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
