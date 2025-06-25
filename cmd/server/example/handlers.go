@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/norlis/event-driven/pkg/usecase/router/metadata"
 	"time"
 
 	"go.uber.org/zap"
@@ -44,6 +45,10 @@ func (h *handler) Execute(ctx context.Context, event map[string]any) (json.RawMe
 		logger.Info("[CuentasBancarias Handler] Procesando evento", zap.String("eventId", data.Header.EventId), zap.Any("body", data.Body))
 
 	*/
+
+	if envelope, ok := metadata.FromContext(ctx); ok {
+		envelope.Set("eventName", "test")
+	}
 
 	select {
 	case <-time.After(15 * time.Second):

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/norlis/event-driven/pkg/usecase/router/metadata"
 	"sync"
 
 	"github.com/norlis/event-driven/pkg/domain"
@@ -65,7 +66,9 @@ func (w *Worker) Start(workerEnded chan<- int) {
 				}
 				w.logger.Info("Procesando mensaje", zap.String("messageUUID", job.Msg.UUID))
 
-				handlerCtx, cancelHandler := context.WithCancel(context.Background())
+				parentCtx, cancelHandler := context.WithCancel(context.Background())
+
+				// 2. Inicia la goroutine vigilante que cancelará el contexto si el worker recibe la señal de Quit.
 				handlerDone := make(chan struct{})
 				go func() {
 					defer close(handlerDone)
@@ -73,19 +76,21 @@ func (w *Worker) Start(workerEnded chan<- int) {
 					case <-w.Quit:
 						w.logger.Info("Señal Quit recibida por el worker, cancelando handler en curso", zap.String("messageUUID", job.Msg.UUID))
 						cancelHandler()
-					case <-handlerCtx.Done():
-						// No es necesario hacer nada más aquí, solo salir de esta goroutine.
+					case <-parentCtx.Done():
+						// El contexto terminó por otra razón (el handler finalizó), así que salimos.
 					}
 				}()
 
-				// TODO change data to domain.Message
+				store := metadata.NewStore()
+				handlerCtx := metadata.NewContext(parentCtx, store)
+
 				data, err := job.Handler(handlerCtx, job.Msg)
 
 				if handlerCtx.Err() == nil { // Si el contexto no fue previamente cancelado
 					cancelHandler()
 				}
 
-				<-handlerDone
+				<-handlerDone // Espera a que la goroutine vigilante termine.
 
 				if err != nil {
 					w.logger.Error(
@@ -101,7 +106,15 @@ func (w *Worker) Start(workerEnded chan<- int) {
 				// Publicar el mensaje original si hay un publisher.
 
 				if job.Publisher != nil && data != nil {
-					if pubErr := job.Publisher.Publish(domain.NewNewMessageWithoutAck(job.Msg.UUID, data, make(map[string]string))); pubErr != nil {
+					finalMetadata := store.All()
+
+					for k, v := range job.Msg.Metadata {
+						if _, exists := finalMetadata[k]; !exists {
+							finalMetadata[k] = v
+						}
+					}
+
+					if pubErr := job.Publisher.Publish(domain.NewNewMessageWithoutAck(job.Msg.UUID, data, finalMetadata)); pubErr != nil {
 						w.logger.Error("Error publicando mensaje después del handler", zap.Error(pubErr), zap.String("messageUUID", job.Msg.UUID))
 						// TODO: Decidir si un fallo en la publicación debe causar Nack del mensaje original
 						// si no se ha hecho Ack/Nack aún (actualmente ya se hizo).

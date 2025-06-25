@@ -1,18 +1,19 @@
 package main
 
 import (
-	"cloud.google.com/go/pubsub"
 	"context"
+	"log"
+	"net/http"
+
+	"cloud.google.com/go/pubsub"
 	"github.com/norlis/event-driven/cmd/server/example"
 	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"github.com/norlis/httpgate/pkg/health"
 	"github.com/norlis/httpgate/pkg/middleware"
 	"github.com/norlis/httpgate/pkg/opa"
-	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
-	"log"
-	"net/http"
 )
 
 var (
@@ -93,7 +94,7 @@ func main() {
 			opaConfig := opa.Config{
 				Query:        "data.authz.allow",
 				PoliciesPath: "policies/authz", // Directorio con authz.rego
-				DataFiles: []string{
+				DataFiles:    []string{
 					//"policies/authz/whitelist.json",
 					//"policies/authz/roles.json",
 					//"policies/authz/permissions.json",

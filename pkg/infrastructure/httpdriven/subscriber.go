@@ -2,11 +2,12 @@ package httpdriven
 
 import (
 	"context"
+	"io"
+	"net/http"
+
 	"github.com/google/uuid"
 	"github.com/norlis/event-driven/pkg/domain"
 	"go.uber.org/zap"
-	"io"
-	"net/http"
 )
 
 type SubscriberConfig struct {
