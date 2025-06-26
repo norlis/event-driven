@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -30,9 +32,10 @@ func TestWorker_Start_ProcessJobAndAck(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start() // Inicia la goroutine del worker
+	workerInstance.Start(workerEnded) // Inicia la goroutine del worker
 
 	handlerCalled := false
 	mockMsgAckCalled := false
@@ -45,9 +48,9 @@ func TestWorker_Start_ProcessJobAndAck(t *testing.T) {
 
 	job := Job{
 		Msg: mockMsg,
-		Handler: func(msg *event.Message) (any, error) {
+		Handler: func(_ context.Context, msg *event.Message) (json.RawMessage, error) {
 			handlerCalled = true
-			return "result", nil // Handler exitoso
+			return []byte("result"), nil // Handler exitoso
 		},
 		Publisher: nil,
 	}
@@ -77,9 +80,10 @@ func TestWorker_Start_ProcessJobAndNackOnError(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	handlerCalled := false
 	mockMsgAckCalled := false
@@ -93,7 +97,7 @@ func TestWorker_Start_ProcessJobAndNackOnError(t *testing.T) {
 
 	job := Job{
 		Msg: mockMsg,
-		Handler: func(msg *event.Message) (any, error) {
+		Handler: func(_ context.Context, msg *event.Message) (json.RawMessage, error) {
 			handlerCalled = true
 			return nil, expectedError // Handler falla
 		},
@@ -123,9 +127,10 @@ func TestWorker_Start_ProcessJobAndPublish(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	mockPub := &mockWorkerPublisher{}
 	mockMsgAckCalled := false
@@ -137,7 +142,7 @@ func TestWorker_Start_ProcessJobAndPublish(t *testing.T) {
 
 	job := Job{
 		Msg:       mockMsg,
-		Handler:   func(msg *event.Message) (any, error) { return "result", nil },
+		Handler:   func(_ context.Context, msg *event.Message) (json.RawMessage, error) { return []byte("result"), nil },
 		Publisher: mockPub,
 	}
 
@@ -160,9 +165,10 @@ func TestWorker_Stop(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job) // No buffer, para que el worker bloquee si no hay quit
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	workerInstance.Stop() // Enviar señal de quit
 
@@ -186,9 +192,10 @@ func TestWorker_JobQueueClosed(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	jobQueue := make(chan Job, 1)
 	var wg sync.WaitGroup
+	workerEnded := make(chan int, 1)
 
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
-	workerInstance.Start()
+	workerInstance.Start(workerEnded)
 
 	close(jobQueue) // Cerrar la cola de trabajos
 
