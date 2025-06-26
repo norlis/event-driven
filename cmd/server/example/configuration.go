@@ -15,18 +15,14 @@ type Cloud struct {
 type Messaging struct {
 	PublishDestinationTopic string `mapstructure:"publish-destination-topic"`
 	SubscribeDestination    string `mapstructure:"subscribe-destination"`
-	PublishTraceTopic       string `mapstructure:"publish-trace-topic"`
-	SubscribeTrace          string `mapstructure:"subscribe-trace"`
 }
 
 func NewConfigurationExample() *Configuration {
 	return &Configuration{
 		LogLevel: "info",
 		Messaging: Messaging{
-			PublishDestinationTopic: "",
-			SubscribeDestination:    os.Getenv("EVT_APP_SUBSCRIPTION"),
-			PublishTraceTopic:       os.Getenv("EVT_PUBLISH_TRACE_TOPIC"),
-			SubscribeTrace:          os.Getenv("EVT_TRACE_SUBSCRIPTION"),
+			PublishDestinationTopic: os.Getenv("EVT_PUBLISH"),
+			SubscribeDestination:    os.Getenv("EVT_SUBSCRIPTION"),
 		},
 		Cloud: Cloud{GCloudProjectId: os.Getenv("GCP_PROJECT_ID")},
 	}

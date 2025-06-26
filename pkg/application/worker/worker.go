@@ -3,12 +3,10 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"sync"
-
 	"github.com/norlis/event-driven/pkg/application/router/metadata"
 	"github.com/norlis/event-driven/pkg/domain/event"
 	"github.com/norlis/event-driven/pkg/port"
+	"sync"
 
 	"go.uber.org/zap"
 )
@@ -21,119 +19,84 @@ type Job struct {
 
 type Worker struct {
 	ID       int
-	JobQueue <-chan Job // Canal de solo lectura
-	Quit     chan struct{}
-	Wg       *sync.WaitGroup
+	JobQueue <-chan Job
+	wg       *sync.WaitGroup
 	logger   *zap.Logger
-	stopOnce sync.Once
 }
 
+// NewWorker crea una nueva instancia de Worker.
 func NewWorker(id int, jobQueue <-chan Job, wg *sync.WaitGroup, logger *zap.Logger) *Worker {
 	return &Worker{
 		ID:       id,
 		JobQueue: jobQueue,
-		Quit:     make(chan struct{}),
-		Wg:       wg,
+		wg:       wg,
 		logger:   logger.With(zap.Int("workerID", id)),
 	}
 }
 
 func (w *Worker) Start(workerEnded chan<- int) {
-	w.Wg.Add(1)
-	go func() {
-		defer func() {
-			w.logger.Info("WORKER: Goroutine terminando, llamando a Wg.Done()")
-			w.Wg.Done()
-			workerEnded <- w.ID
-		}()
-
-		defer func() { // Este defer es para el recover
-			if r := recover(); r != nil {
-				w.logger.Error(
-					"WORKER ENTRO EN PANICO RECUPERADO",
-					zap.Any("reason", r),
-				)
-			}
-		}()
-
-		w.logger.Info("Worker iniciado")
-		for {
-			w.logger.Debug("Worker esperando en select")
-			select {
-			case job, ok := <-w.JobQueue:
-				if !ok {
-					w.logger.Info("JobQueue cerrado, worker deteniéndose")
-					return
-				}
-				w.logger.Info("Procesando mensaje", zap.String("messageUUID", job.Msg.UUID))
-
-				parentCtx, cancelHandler := context.WithCancel(context.Background())
-
-				// 2. Inicia la goroutine vigilante que cancelará el contexto si el worker recibe la señal de Quit.
-				handlerDone := make(chan struct{})
-				go func() {
-					defer close(handlerDone)
-					select {
-					case <-w.Quit:
-						w.logger.Info("Señal Quit recibida por el worker, cancelando handler en curso", zap.String("messageUUID", job.Msg.UUID))
-						cancelHandler()
-					case <-parentCtx.Done():
-						// El contexto terminó por otra razón (el handler finalizó), así que salimos.
-					}
-				}()
-
-				store := metadata.NewStore()
-				handlerCtx := metadata.NewContext(parentCtx, store)
-
-				data, err := job.Handler(handlerCtx, job.Msg)
-
-				if handlerCtx.Err() == nil { // Si el contexto no fue previamente cancelado
-					cancelHandler()
-				}
-
-				<-handlerDone // Espera a que la goroutine vigilante termine.
-
-				if err != nil {
-					w.logger.Error(
-						"Error en el handler del worker",
-						zap.Error(err), zap.String("messageUUID", job.Msg.UUID),
-						zap.Bool("Canceled", errors.Is(err, context.Canceled)),
-					)
-					job.Msg.Nack()
-				} else {
-					job.Msg.Ack() // Ack si el handler fue exitoso
-				}
-
-				// Publicar el mensaje original si hay un publisher.
-
-				if job.Publisher != nil && data != nil {
-					finalMetadata := store.All()
-
-					for k, v := range job.Msg.Metadata {
-						if _, exists := finalMetadata[k]; !exists {
-							finalMetadata[k] = v
-						}
-					}
-
-					if pubErr := job.Publisher.Publish(event.NewNewMessageWithoutAck(job.Msg.UUID, data, finalMetadata)); pubErr != nil {
-						w.logger.Error("Error publicando mensaje después del handler", zap.Error(pubErr), zap.String("messageUUID", job.Msg.UUID))
-						// TODO: Decidir si un fallo en la publicación debe causar Nack del mensaje original
-						// si no se ha hecho Ack/Nack aún (actualmente ya se hizo).
-					}
-				}
-
-			case <-w.Quit:
-				w.logger.Info("WORKER: recibiendo señal de quit, deteniéndose")
-				return
-			}
-		}
+	defer func() {
+		w.recoverPanics()
+		w.wg.Done()
+		workerEnded <- w.ID
 	}()
+
+	w.logger.Info("Worker started")
+
+	for job := range w.JobQueue {
+		w.processJob(job)
+	}
+
+	w.logger.Info("Worker stopping because job channel was closed.")
 }
 
-func (w *Worker) Stop() {
-	w.logger.Info("WORKER: Stop() llamado")
-	w.stopOnce.Do(func() {
-		w.logger.Debug("WORKER: Stop() (stopOnce) - Cerrando Quit chan", zap.Int("workerID", w.ID))
-		close(w.Quit)
-	})
+func (w *Worker) processJob(job Job) {
+	w.logger.Debug("Processing job", zap.String("messageUUID", job.Msg.UUID))
+
+	store := metadata.NewStore()
+	handlerCtx := metadata.NewContext(job.Msg.Context(), store)
+
+	data, err := job.Handler(handlerCtx, job.Msg)
+
+	if err != nil {
+		w.logger.Error("Handler execution failed",
+			zap.Error(err),
+			zap.String("messageUUID", job.Msg.UUID),
+		)
+		job.Msg.Nack()
+		return
+	}
+
+	job.Msg.Ack()
+
+	if job.Publisher != nil && data != nil {
+		w.publishResult(job, data, store)
+	}
+}
+
+func (w *Worker) publishResult(job Job, data json.RawMessage, store *metadata.Store) {
+	finalMetadata := store.All()
+	for k, v := range job.Msg.Metadata {
+		if _, exists := finalMetadata[k]; !exists {
+			finalMetadata[k] = v
+		}
+	}
+
+	newEvent := event.NewMessageWithoutAck(job.Msg.UUID, data, finalMetadata)
+
+	if pubErr := job.Publisher.Publish(newEvent); pubErr != nil {
+		w.logger.Error("Failed to publish result event",
+			zap.Error(pubErr),
+			zap.String("originalMessageUUID", job.Msg.UUID),
+		)
+	}
+}
+
+func (w *Worker) recoverPanics() {
+	if r := recover(); r != nil {
+		w.logger.Error("Worker panicked but recovered",
+			zap.Any("panic", r),
+			zap.Stack("stacktrace"),
+		)
+	}
 }

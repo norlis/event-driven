@@ -31,7 +31,7 @@ type Message struct {
 	preflightCallback PreflightCallback
 }
 
-func NewNewMessageWithoutAck(uuid string, payload []byte, attrs map[string]string) *Message {
+func NewMessageWithoutAck(uuid string, payload []byte, attrs map[string]string) *Message {
 	return NewMessage(uuid, payload, attrs, dummy, dummy)
 }
 

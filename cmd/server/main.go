@@ -42,13 +42,11 @@ func main() {
 	//ctx := context.Background()
 
 	app := fx.New(
-		//fx.StartTimeout(10*time.Second),
+		fx.StartTimeout(10*time.Second),
 		//fx.StopTimeout(120*time.Second),
 		fx.Provide(example.NewConfigurationExample),
 		fx.Provide(example.NewLogger),
-		//fx.Provide(example.NewHttpServer),
 		fx.Provide(example.NewHttpServerMux),
-		//fx.Provide(example.NewOpenTelemetry),
 		fx.Provide(example.NewPubSubClient),
 		fx.Provide(
 			fx.Annotate(
@@ -62,24 +60,12 @@ func main() {
 				fx.ResultTags(`name:"AppSubscription"`),
 			),
 		),
-		fx.Provide(
-			fx.Annotate(
-				example.NewTraceSubscription,
-				fx.ResultTags(`name:"TraceSubscription"`),
-			),
-		),
 		fx.Provide(example.NewEventPublisher),
 		fx.Provide(example.NewWorkerDispatcher),
 		fx.Provide(
 			fx.Annotate(
 				example.NewPrincipalRouter,
 				fx.ResultTags(`name:"PrincipalRouter"`),
-			),
-		),
-		fx.Provide(
-			fx.Annotate(
-				example.NewTraceRouter,
-				fx.ResultTags(`name:"TraceRouter"`),
 			),
 		),
 		fx.Provide(
@@ -92,13 +78,14 @@ func main() {
 		fx.Provide(func() *health.Status {
 			return health.NewStatus(GitHash)
 		}),
+		fx.Provide(presenters.NewPresenters),
 		fx.Invoke(example.RegisterEventHandlers),
 		fx.Invoke(func(router *http.ServeMux, status *health.Status, logger *zap.Logger, render presenters.Presenters) {
 
 			opaConfig := opa.Config{
 				Query:        "data.authz.allow",
 				PoliciesPath: "policies/authz", // Directorio con authz.rego
-				DataFiles:    []string{
+				DataFiles: []string{
 					//"policies/authz/whitelist.json",
 					//"policies/authz/roles.json",
 					//"policies/authz/permissions.json",

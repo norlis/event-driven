@@ -1,6 +1,6 @@
 
 # --- Configuración y Variables ---
-APP_IMPORT_PATH ?= github.com/norlis/event-driven
+APP_IMPORT_PATH := $(shell go list -m)
 ALL_PKGS := $(sort $(shell go list ./...))
 
 # Variables para inyectar en el build
@@ -8,7 +8,7 @@ GIT_SHA := $(shell git rev-parse HEAD)
 DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 
 LDFLAGS := -ldflags "-s -w \
-	-X $(APP_IMPORT_PATH)/application.GitHash=$(GIT_SHA) \
+	-X $(APP_IMPORT_PATH)/internal/application.GitHash=$(GIT_SHA) \
 	-X $(APP_IMPORT_PATH)/internal/application.Date=$(DATE)"
 
 # --- Herramientas y Módulos ---

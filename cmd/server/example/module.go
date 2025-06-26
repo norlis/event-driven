@@ -25,9 +25,8 @@ import (
 type SubscriptionParams struct {
 	fx.In
 
-	HttpSubscription  port.Subscription `name:"HttpSubscription"`
-	AppSubscription   port.Subscription `name:"AppSubscription"`
-	TraceSubscription port.Subscription `name:"TraceSubscription"`
+	HttpSubscription port.Subscription `name:"HttpSubscription"`
+	AppSubscription  port.Subscription `name:"AppSubscription"`
 }
 
 type RouterParams struct {
@@ -35,7 +34,6 @@ type RouterParams struct {
 
 	HttpRouter      *router.Router `name:"HttpRouter"`
 	PrincipalRouter *router.Router `name:"PrincipalRouter"`
-	TraceRouter     *router.Router `name:"TraceRouter"`
 }
 
 type EventParams struct {
@@ -49,7 +47,7 @@ type EventParams struct {
 }
 
 func NewLogger(cfg *Configuration) (*zap.Logger, error) {
-	debugMode := strings.ToLower(cfg.LogLevel) == "debug"
+	debugMode := strings.EqualFold(cfg.LogLevel, "debug")
 
 	l, err := logger.New(debugMode)
 	if err != nil {
@@ -123,27 +121,16 @@ func NewAppSubscription(psClient *pubsub.Client, configuration *Configuration, l
 	return messaging.NewSubscription(psClient, subscriberCfg, logger.Named("app-subscription"))
 }
 
-func NewTraceSubscription(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) port.Subscription {
-	subscriberCfg := messaging.SubscriberConfig{
-		ProjectID:              configuration.Cloud.GCloudProjectId,
-		SubscriptionID:         configuration.Messaging.SubscribeTrace,
-		MaxOutstandingMessages: 120, // NumWorkers + QueueSize
-		NumGoroutines:          10,
-		MaxExtension:           60 * time.Second,
-	}
-	return messaging.NewSubscription(psClient, subscriberCfg, logger.Named("trace-subscription"))
-}
-
 func NewEventPublisher(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) (port.Publisher, error) {
-	if configuration.Messaging.PublishTraceTopic == "" {
+	if configuration.Messaging.PublishDestinationTopic == "" {
 		logger.Info("No se configuró PublishTraceTopic, no se creará el publicador de resultados.")
 		return nil, nil
 	}
 	publisherCfg := messaging.PublisherConfig{
 		ProjectID: configuration.Cloud.GCloudProjectId,
-		TopicID:   configuration.Messaging.PublishTraceTopic,
+		TopicID:   configuration.Messaging.PublishDestinationTopic,
 	}
-	return messaging.NewPublisher(psClient, publisherCfg, logger.Named("trace-publisher")), nil
+	return messaging.NewPublisher(psClient, publisherCfg, logger.Named("publisher")), nil
 }
 
 // NewWorkerDispatcher Provider para el Dispatcher de Workers
@@ -181,13 +168,16 @@ func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams,
 	r.Use(middlewares.Recoverer)
 	r.UsePreflight(middlewares.ValidationMiddleware(logger))
 
+	var cancel context.CancelFunc
+
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			logger.Info("stating http Event Router...")
-			go func() {
-				childCtx, cancel := context.WithCancel(context.Background())
-				defer cancel()
 
+			var childCtx context.Context
+			childCtx, cancel = context.WithCancel(context.Background())
+
+			go func() {
 				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("Error crítico en http Event Router", zap.Error(err))
 				}
@@ -196,6 +186,9 @@ func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams,
 		},
 		OnStop: func(ctx context.Context) error {
 			logger.Info("Router shutdown manejado por cancelación externa.")
+			if cancel != nil {
+				cancel()
+			}
 			return nil
 		},
 	})
@@ -227,13 +220,17 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 		).Middleware,
 		middlewares.Recoverer,
 	)
+
+	var cancel context.CancelFunc
+
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			logger.Info("Iniciando Event Router...")
-			go func() {
-				childCtx, cancel := context.WithCancel(context.Background())
-				defer cancel()
 
+			var childCtx context.Context
+			childCtx, cancel = context.WithCancel(context.Background())
+
+			go func() {
 				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("Error crítico en Event Router", zap.Error(err))
 				}
@@ -242,6 +239,9 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 		},
 		OnStop: func(ctx context.Context) error {
 			logger.Info("Router shutdown manejado por cancelación externa.")
+			if cancel != nil {
+				cancel()
+			}
 			return nil
 		},
 	})
@@ -249,14 +249,14 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 }
 
 // NewTraceRouter Provider para el Router
-func NewTraceRouter(params EventParams, subs SubscriptionParams) *router.Router {
-	routerCfg := router.Config{
-		Subscription:     subs.TraceSubscription,
-		WorkerDispatcher: params.Dispatcher,
-		Logger:           params.Logger.Named("pubsub-router-trace"),
-	}
-	return router.New(routerCfg)
-}
+//func NewTraceRouter(params EventParams, subs SubscriptionParams) *router.Router {
+//	routerCfg := router.Config{
+//		Subscription:     subs.TraceSubscription,
+//		WorkerDispatcher: params.Dispatcher,
+//		Logger:           params.Logger.Named("pubsub-router-trace"),
+//	}
+//	return router.New(routerCfg)
+//}
 
 func NewHttpServerMux(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
 	s := http.NewServeMux()

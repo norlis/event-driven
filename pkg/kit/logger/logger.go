@@ -15,11 +15,13 @@ func New(debug bool) (*zap.Logger, error) {
 	//encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder // Niveles con colores.
 	encoderConfig.TimeKey = "timestamp"
 
-	if debug {
-		config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
-	}
-
 	config.EncoderConfig = encoderConfig
 	config.DisableStacktrace = true // Deshabilitar para no ser tan verboso, habilitar si se necesita para debug.
+
+	if debug {
+		config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+		config.DisableStacktrace = false
+	}
+
 	return config.Build()
 }

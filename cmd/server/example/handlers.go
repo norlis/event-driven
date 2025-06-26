@@ -4,16 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
-
 	"github.com/norlis/event-driven/pkg/application/router/metadata"
 
 	"go.uber.org/zap"
 )
 
 type Person struct {
-	Name string `name:"name" validate:"required"`
-	Age  int    `name:"age" validate:"required"`
+	Name string `name:"name" validate:"required" json:"name"`
+	Age  int    `name:"age" validate:"required" json:"age"`
 }
 
 var ErrInvalidObject = errors.New("objeto inválido")
@@ -21,6 +19,7 @@ var ErrDataNotFound = errors.New("datos no encontrados pero no es crítico")
 
 type UseCaseExample interface {
 	Execute(ctx context.Context, event Person) (json.RawMessage, error)
+	Command(ctx context.Context, event Person) (json.RawMessage, error)
 }
 
 func NewHandler(logger *zap.Logger) UseCaseExample {
@@ -33,45 +32,33 @@ type handler struct {
 
 func (h *handler) Execute(ctx context.Context, event Person) (json.RawMessage, error) {
 
-	/*
-		tracer := otel.Tracer("event-router-clean/handler1")      // Usar un nombre de instrumentación
-		handlerCtx, span := tracer.Start(ctx, "handler1.Process") // Crear un span hijo
-		defer span.End()
-
-		// Usar el contexto del mensaje si es necesario: data.Msg.Context()
-		// O el contexto global pasado al handler si se prefiere.
-		select {
-		case <-handlerCtx.Done():
-			logger.Warn("[CuentasBancarias Handler] Contexto cancelado antes de procesar", zap.String("eventId", data.Header.EventId))
-			return nil, handlerCtx.Err()
-		default:
-			// Continuar procesamiento
-		}
-
-		logger.Info("[CuentasBancarias Handler] Procesando evento", zap.String("eventId", data.Header.EventId), zap.Any("body", data.Body))
-
-	*/
-
 	if envelope, ok := metadata.FromContext(ctx); ok {
 		envelope.Set("eventName", "test")
 	}
 
-	select {
-	case <-time.After(15 * time.Second):
-		h.logger.Info("Processing event", zap.Any("event", event))
-		return []byte(`{"success": true}`), ErrInvalidObject
-	case <-ctx.Done():
-		h.logger.Info("HANDLER: Sleep interrumpido por cancelación de contexto")
-		return nil, ctx.Err()
-	}
+	h.logger.Info("Processing event from sub", zap.Any("event", event))
 
-	//time.Sleep(15 * time.Second)
-	//h.logger.Info("Processing event", zap.Any("event", event))
-	//
-	//return []byte(`{"success": true}`), nil
+	//panic("test")
+
+	return []byte(`{"success": true}`), nil
+
+	// no publish
+	//return nil, nil
 
 	//err := errors.New("ErrValidate")
 	//h.logger.Error("ErrValidate", zap.Error(err))
 	//
 	//return nil, errors.New("no data")
+}
+
+func (h *handler) Command(ctx context.Context, evt Person) (json.RawMessage, error) {
+	evt.Age = 10
+	h.logger.Info("Processing event from command", zap.Any("event", evt))
+
+	if envelope, ok := metadata.FromContext(ctx); ok {
+		envelope.Set("eventName", "test")
+		envelope.Set("name", evt.Name)
+	}
+
+	return json.Marshal(evt)
 }

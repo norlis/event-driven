@@ -69,8 +69,8 @@ func (h *HttpSubscriber) Handler(handler func(msg *event.Message)) http.HandlerF
 			zap.String("path", h.config.Pattern),
 		)
 
-		msg := event.NewNewMessageWithoutAck(messageUUID, body, map[string]string{})
-		//msg := domain.NewNewMessageWithoutAck(messageUUID, body, headersAsMetadata)
+		msg := event.NewMessageWithoutAck(messageUUID, body, map[string]string{})
+		//msg := domain.NewMessageWithoutAck(messageUUID, body, headersAsMetadata)
 		preflightResultChan := make(chan error, 1)
 		msg.SetPreflightCallback(func(err error) {
 			preflightResultChan <- err
