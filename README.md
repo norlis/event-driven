@@ -254,7 +254,7 @@ graph TD
     subgraph Layers
         direction LR
         A(adapter) --> B(port);
-        B -- uses --> C(app);
+        B -- uses --> C(application);
         C -- uses --> D(domain);
         E(kit) -- "usado por todos" --> A;
         E -- "usado por todos" --> C;
