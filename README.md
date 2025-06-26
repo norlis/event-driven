@@ -249,6 +249,24 @@ opa run --server policy.rego
 
 ### Resumen
 
+```mermaid
+graph TD
+    subgraph Layers
+        direction LR
+        A(adapter) --> B(port);
+        B -- uses --> C(app);
+        C -- uses --> D(domain);
+        E(kit) -- "usado por todos" --> A;
+        E -- "usado por todos" --> C;
+    end
+
+    style D fill:#D4EFDF,stroke:#27AE60,stroke-width:2px,color:#1B5E20
+    style C fill:#D6EAF8,stroke:#3498DB,stroke-width:2px,color:#1A5276
+    style B fill:#FCF3CF,stroke:#F39C12,stroke-width:2px,color:#7D6608
+    style A fill:#EBDEF0,stroke:#8E44AD,stroke-width:2px,color:#512E5F
+    style E fill:#E5E7E9,stroke:#839192,stroke-width:2px,color:#2C3E50
+```
+
 | Directorio    | Propósito Principal                        | ¿Qué Pongo Aquí?                                                                 | Ejemplo Concreto                                                                           |
 |---------------|--------------------------------------------|----------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
 | `domain`      | El Corazón del Negocio                     | Entidades, Eventos de Dominio, Lógica de Negocio pura.                          | `struct Order`, `func (o *Order) AddItem(...)`                                             |
