@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/norlis/event-driven/pkg/application/router/middlewares"
 	"github.com/norlis/event-driven/pkg/domain"
-	"github.com/norlis/event-driven/pkg/usecase/router/middlewares"
 	"go.uber.org/zap"
 )
 

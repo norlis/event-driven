@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/domain/event"
 
 	"cloud.google.com/go/pubsub"
 	"go.uber.org/zap"
@@ -37,7 +37,7 @@ func NewSubscription(client *pubsub.Client, cfg SubscriberConfig, logger *zap.Lo
 	}
 }
 
-func (s *GCPSubscription) Start(ctx context.Context, handler func(msg *domain.Message)) error {
+func (s *GCPSubscription) Start(ctx context.Context, handler func(msg *event.Message)) error {
 	sub := s.client.Subscription(s.cfg.SubscriptionID)
 
 	sub.ReceiveSettings.MaxOutstandingMessages = s.cfg.MaxOutstandingMessages
@@ -57,7 +57,7 @@ func (s *GCPSubscription) Start(ctx context.Context, handler func(msg *domain.Me
 
 		// Envolver el mensaje de pubsub.Message en domain.Message,
 		// pasando las funciones Ack/Nack del mensaje original.
-		domainMsg := domain.NewMessage(m.ID, m.Data, m.Attributes, m.Ack, m.Nack)
+		domainMsg := event.NewMessage(m.ID, m.Data, m.Attributes, m.Ack, m.Nack)
 		handler(domainMsg)
 	})
 

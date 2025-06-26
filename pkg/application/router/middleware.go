@@ -1,9 +1,10 @@
 package router
 
 // Middleware es una función que envuelve un HandlerFunc para añadir comportamiento.
-// TODO: add context -> type Middleware func(ctx context.Context, next HandlerFunc) HandlerFunc
 type Middleware func(next HandlerFunc) HandlerFunc
 
+// ChainMiddlewares aplica una cadena de middlewares a un handler.
+// Los middlewares se aplican en orden inverso (el último añadido es el más externo).
 func ChainMiddlewares(handler HandlerFunc, mws ...Middleware) HandlerFunc {
 	chainedHandler := handler
 	for i := len(mws) - 1; i >= 0; i-- {

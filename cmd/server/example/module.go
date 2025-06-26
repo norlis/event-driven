@@ -8,14 +8,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/norlis/event-driven/pkg/kit/logger"
+
+	"github.com/norlis/event-driven/pkg/port"
+
 	"cloud.google.com/go/pubsub"
-	"github.com/norlis/event-driven/pkg/domain"
-	"github.com/norlis/event-driven/pkg/infrastructure/httpdriven"
-	messaging "github.com/norlis/event-driven/pkg/infrastructure/pubsub"
-	"github.com/norlis/event-driven/pkg/logger"
-	"github.com/norlis/event-driven/pkg/usecase/router"
-	"github.com/norlis/event-driven/pkg/usecase/router/middlewares"
-	"github.com/norlis/event-driven/pkg/usecase/worker"
+	"github.com/norlis/event-driven/pkg/adapter/httpdriven"
+	messaging "github.com/norlis/event-driven/pkg/adapter/pubsub"
+	"github.com/norlis/event-driven/pkg/application/router"
+	"github.com/norlis/event-driven/pkg/application/router/middlewares"
+	"github.com/norlis/event-driven/pkg/application/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -23,9 +25,9 @@ import (
 type SubscriptionParams struct {
 	fx.In
 
-	HttpSubscription  domain.Subscription `name:"HttpSubscription"`
-	AppSubscription   domain.Subscription `name:"AppSubscription"`
-	TraceSubscription domain.Subscription `name:"TraceSubscription"`
+	HttpSubscription  port.Subscription `name:"HttpSubscription"`
+	AppSubscription   port.Subscription `name:"AppSubscription"`
+	TraceSubscription port.Subscription `name:"TraceSubscription"`
 }
 
 type RouterParams struct {
@@ -110,7 +112,7 @@ func NewPubSubClient(lc fx.Lifecycle, configuration *Configuration, logger *zap.
 	return client, nil
 }
 
-func NewAppSubscription(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) domain.Subscription {
+func NewAppSubscription(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) port.Subscription {
 	subscriberCfg := messaging.SubscriberConfig{
 		ProjectID:              configuration.Cloud.GCloudProjectId,
 		SubscriptionID:         configuration.Messaging.SubscribeDestination,
@@ -121,7 +123,7 @@ func NewAppSubscription(psClient *pubsub.Client, configuration *Configuration, l
 	return messaging.NewSubscription(psClient, subscriberCfg, logger.Named("app-subscription"))
 }
 
-func NewTraceSubscription(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) domain.Subscription {
+func NewTraceSubscription(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) port.Subscription {
 	subscriberCfg := messaging.SubscriberConfig{
 		ProjectID:              configuration.Cloud.GCloudProjectId,
 		SubscriptionID:         configuration.Messaging.SubscribeTrace,
@@ -132,7 +134,7 @@ func NewTraceSubscription(psClient *pubsub.Client, configuration *Configuration,
 	return messaging.NewSubscription(psClient, subscriberCfg, logger.Named("trace-subscription"))
 }
 
-func NewEventPublisher(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) (domain.Publisher, error) {
+func NewEventPublisher(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) (port.Publisher, error) {
 	if configuration.Messaging.PublishTraceTopic == "" {
 		logger.Info("No se configuró PublishTraceTopic, no se creará el publicador de resultados.")
 		return nil, nil
@@ -292,7 +294,7 @@ func NewHttpServerMux(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
 	return s
 }
 
-func NewHttpSubscriber(server *http.ServeMux, logger *zap.Logger) (domain.Subscription, error) {
+func NewHttpSubscriber(server *http.ServeMux, logger *zap.Logger) (port.Subscription, error) {
 	return httpdriven.NewSubscriber(
 		server,
 		httpdriven.SubscriberConfig{

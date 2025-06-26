@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/domain/event"
 
 	"cloud.google.com/go/pubsub"
 	"go.uber.org/zap"
@@ -29,7 +29,7 @@ func NewPublisher(client *pubsub.Client, cfg PublisherConfig, logger *zap.Logger
 	}
 }
 
-func (p *GCPPublisher) Publish(msg *domain.Message) error {
+func (p *GCPPublisher) Publish(msg *event.Message) error {
 	ctx := context.Background() // TODO: Considerar pasar contexto si es necesario para timeouts
 	topic := p.client.Topic(p.topicID)
 	defer topic.Stop() // Importante para limpiar recursos del publicador del topic

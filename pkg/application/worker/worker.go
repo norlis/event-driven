@@ -4,18 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/norlis/event-driven/pkg/usecase/router/metadata"
 	"sync"
 
-	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/application/router/metadata"
+	"github.com/norlis/event-driven/pkg/domain/event"
+	"github.com/norlis/event-driven/pkg/port"
 
 	"go.uber.org/zap"
 )
 
 type Job struct {
-	Msg       *domain.Message
-	Handler   func(context.Context, *domain.Message) (json.RawMessage, error)
-	Publisher domain.Publisher
+	Msg       *event.Message
+	Handler   func(context.Context, *event.Message) (json.RawMessage, error)
+	Publisher port.Publisher
 }
 
 type Worker struct {
@@ -114,7 +115,7 @@ func (w *Worker) Start(workerEnded chan<- int) {
 						}
 					}
 
-					if pubErr := job.Publisher.Publish(domain.NewNewMessageWithoutAck(job.Msg.UUID, data, finalMetadata)); pubErr != nil {
+					if pubErr := job.Publisher.Publish(event.NewNewMessageWithoutAck(job.Msg.UUID, data, finalMetadata)); pubErr != nil {
 						w.logger.Error("Error publicando mensaje después del handler", zap.Error(pubErr), zap.String("messageUUID", job.Msg.UUID))
 						// TODO: Decidir si un fallo en la publicación debe causar Nack del mensaje original
 						// si no se ha hecho Ack/Nack aún (actualmente ya se hizo).
