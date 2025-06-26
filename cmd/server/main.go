@@ -4,15 +4,18 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"time"
+
+	"github.com/norlis/httpgate/pkg/adapter/apidriven/presenters"
 
 	"github.com/norlis/event-driven/pkg/port"
 
 	"cloud.google.com/go/pubsub"
 	"github.com/norlis/event-driven/cmd/server/example"
 	"github.com/norlis/event-driven/pkg/application/worker"
-	"github.com/norlis/httpgate/pkg/health"
-	"github.com/norlis/httpgate/pkg/middleware"
-	"github.com/norlis/httpgate/pkg/opa"
+	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
+	"github.com/norlis/httpgate/pkg/adapter/opa"
+	"github.com/norlis/httpgate/pkg/application/health"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -90,7 +93,7 @@ func main() {
 			return health.NewStatus(GitHash)
 		}),
 		fx.Invoke(example.RegisterEventHandlers),
-		fx.Invoke(func(router *http.ServeMux, status *health.Status, logger *zap.Logger) {
+		fx.Invoke(func(router *http.ServeMux, status *health.Status, logger *zap.Logger, render presenters.Presenters) {
 
 			opaConfig := opa.Config{
 				Query:        "data.authz.allow",
@@ -109,9 +112,18 @@ func main() {
 			}
 
 			commons := []middleware.Middleware{
-				middleware.Recover(logger),
+				middleware.Recover(logger, render),
 				middleware.RequestLogger(logger),
-				middleware.Cors(),
+				middleware.NewCors(
+					middleware.CorsOptions{
+						Logger:           logger,
+						AllowedOrigins:   []string{"*"},
+						AllowedMethods:   []string{http.MethodHead, http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
+						AllowedHeaders:   []string{"*"},
+						AllowCredentials: true,
+						MaxAge:           int((12 * time.Hour).Seconds()),
+					},
+				).Middleware,
 			}
 
 			public := middleware.Chain(commons...)

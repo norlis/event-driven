@@ -8,7 +8,7 @@ import (
 
 	"github.com/norlis/event-driven/pkg/domain/event"
 	"github.com/norlis/event-driven/pkg/port"
-	"github.com/norlis/httpgate/pkg/middleware"
+	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
