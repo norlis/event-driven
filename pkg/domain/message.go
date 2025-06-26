@@ -5,9 +5,14 @@ import (
 	"sync"
 )
 
+// dummy ack / nack
 var dummy = func() {
-	// dummy ack / nack
+	// ack / nack
 }
+
+// PreflightCallback es una función que el router puede invocar para notificar
+// el resultado de los chequeos iniciales (validación, enrutamiento).
+type PreflightCallback func(err error)
 
 type Payload []byte
 
@@ -21,6 +26,9 @@ type Message struct {
 	once   sync.Once
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// preflightCallback es invocado tan pronto como el router decide el destino del mensaje.
+	preflightCallback PreflightCallback
 }
 
 func NewNewMessageWithoutAck(uuid string, payload []byte, attrs map[string]string) *Message {
@@ -37,6 +45,19 @@ func NewMessage(uuid string, payload []byte, attrs map[string]string, ackFn, nac
 		nack:     nackFn,
 		ctx:      ctx,
 		cancel:   cancel,
+	}
+}
+
+// SetPreflightCallback permite a un suscriptor (como el de HTTP) registrar un
+// callback para recibir notificación inmediata del resultado del pre-vuelo.
+func (m *Message) SetPreflightCallback(cb PreflightCallback) {
+	m.preflightCallback = cb
+}
+
+// NotifyPreflightDone es usado por el router para invocar el callback si existe.
+func (m *Message) NotifyPreflightDone(err error) {
+	if m.preflightCallback != nil {
+		m.preflightCallback(err)
 	}
 }
 

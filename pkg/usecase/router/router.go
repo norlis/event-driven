@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var noopHandler = func(ctx context.Context, data any) (json.RawMessage, error) { return nil, nil }
+
 type Filter interface {
 	Match(msg *domain.Message) bool
 }
@@ -28,12 +30,19 @@ type Config struct {
 	Subscription     domain.Subscription // Fuente de mensajes
 	WorkerDispatcher *worker.Dispatcher  // Dispatcher para procesar trabajos
 	Logger           *zap.Logger
+
+	// ReportOnNoMatch, si es true, marcará un mensaje con el estado
+	// domain.ErrNoRouteMatched si no coincide con ninguna ruta.
+	// Esto es útil para suscriptores síncronos como HTTP que necesitan
+	// devolver un código de error específico. El valor por defecto es false.
+	ReportOnNoMatch bool
 }
 
 type Router struct {
-	cfg         Config
-	routes      []Route
-	middlewares []Middleware
+	cfg                  Config
+	routes               []Route
+	middlewares          []Middleware
+	preflightMiddlewares []Middleware // Middlewares síncronos para validación
 }
 
 // New creates a new Router for a given Subscription source (PubSub, HTTP, etc.)
@@ -85,9 +94,19 @@ func (r *Router) Run(ctx context.Context) error {
 					zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
 					zap.Any("event", msg.Payload),
 				)
+				msg.NotifyPreflightDone(err)
 				msg.Nack()
 				continue
 			}
+
+			preflightChain := chainMiddlewares(noopHandler, r.preflightMiddlewares...)
+			if _, preflightErr := preflightChain(context.Background(), eventPayload); preflightErr != nil {
+				msg.NotifyPreflightDone(preflightErr)
+				msg.Nack()
+				return
+			}
+
+			msg.NotifyPreflightDone(nil)
 
 			effectiveHandler := chainMiddlewares(rt.Handler, r.middlewares...)
 
@@ -120,6 +139,9 @@ func (r *Router) Run(ctx context.Context) error {
 
 		if !matchedAtLeastOneRoute {
 			r.cfg.Logger.Debug("Mensaje no coincidió con ninguna ruta", zap.String("messageUUID", msg.UUID))
+			if r.cfg.ReportOnNoMatch {
+				msg.NotifyPreflightDone(domain.ErrNoRouteMatched)
+			}
 			msg.Ack() // Ack si no hay rutas coincidentes, para evitar que quede en la cola.
 		}
 	})
@@ -127,6 +149,10 @@ func (r *Router) Run(ctx context.Context) error {
 
 func (r *Router) Use(middlewares ...Middleware) {
 	r.middlewares = append(r.middlewares, middlewares...)
+}
+
+func (r *Router) UsePreflight(middlewares ...Middleware) {
+	r.preflightMiddlewares = append(r.preflightMiddlewares, middlewares...)
 }
 
 // chainMiddlewares aplica una cadena de middlewares a un handler.

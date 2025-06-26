@@ -7,4 +7,6 @@ var (
 	ErrPublicationFailed  = errors.New("failed to publish message")
 	ErrFilterFailed       = errors.New("failed to evaluate filter expression")
 	ErrHandlerFailed      = errors.New("handler execution failed")
+	ErrNoRouteMatched     = errors.New("message does not match any route") // indica que el mensaje fue recibido pero no coincidió
+
 )

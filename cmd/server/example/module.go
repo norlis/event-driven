@@ -174,8 +174,10 @@ func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams,
 		Subscription:     subs.HttpSubscription,
 		WorkerDispatcher: params.Dispatcher,
 		Logger:           params.Logger.Named("http-router"),
+		ReportOnNoMatch:  true,
 	})
 	r.Use(middlewares.Recoverer)
+	r.UsePreflight(middlewares.ValidationMiddleware(logger))
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {

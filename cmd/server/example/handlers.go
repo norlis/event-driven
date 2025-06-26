@@ -10,11 +10,16 @@ import (
 	"go.uber.org/zap"
 )
 
+type Person struct {
+	Name string `name:"name" validate:"required"`
+	Age  int    `name:"age" validate:"required"`
+}
+
 var ErrInvalidObject = errors.New("objeto inválido")
 var ErrDataNotFound = errors.New("datos no encontrados pero no es crítico")
 
 type UseCaseExample interface {
-	Execute(ctx context.Context, event map[string]any) (json.RawMessage, error)
+	Execute(ctx context.Context, event Person) (json.RawMessage, error)
 }
 
 func NewHandler(logger *zap.Logger) UseCaseExample {
@@ -25,7 +30,7 @@ type handler struct {
 	logger *zap.Logger
 }
 
-func (h *handler) Execute(ctx context.Context, event map[string]any) (json.RawMessage, error) {
+func (h *handler) Execute(ctx context.Context, event Person) (json.RawMessage, error) {
 
 	/*
 		tracer := otel.Tracer("event-router-clean/handler1")      // Usar un nombre de instrumentación

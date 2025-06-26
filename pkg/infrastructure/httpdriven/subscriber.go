@@ -2,8 +2,10 @@ package httpdriven
 
 import (
 	"context"
+	"github.com/norlis/httpgate/pkg/middleware"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/norlis/event-driven/pkg/domain"
@@ -11,39 +13,30 @@ import (
 )
 
 type SubscriberConfig struct {
-	Pattern string
-	Logger  *zap.Logger
+	Pattern    string
+	Logger     *zap.Logger
+	Middleware middleware.Middleware
 }
 
 type HttpSubscriber struct {
-	server *http.ServeMux
-	config SubscriberConfig
-	logger *zap.Logger
-
-	//outputChannels     []chan *domain.Message
-	//outputChannelsLock sync.Locker
-	//closed bool
+	server         *http.ServeMux
+	config         SubscriberConfig
+	logger         *zap.Logger
+	errorResponder *HTTPErrorResponder
 }
 
 func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (domain.Subscription, error) {
 
 	return &HttpSubscriber{
-		server: server,
-		config: cfg,
-		logger: cfg.Logger,
+		server:         server,
+		config:         cfg,
+		logger:         cfg.Logger,
+		errorResponder: NewErrorResponder(),
 	}, nil
 }
 
-func (h *HttpSubscriber) Start(ctx context.Context, handler func(msg *domain.Message)) error {
-	//func (h *HttpSubscriber) Subscribe(ctx context.Context, url string) (<-chan *domain.Message, error) {
-	//	messages := make(chan *domain.Message)
-	//
-	//	h.outputChannelsLock.Lock()
-	//	h.outputChannels = append(h.outputChannels, messages)
-	//	h.outputChannelsLock.Unlock()
-	h.config.Logger.Info("HttpSubscriber Start")
-
-	h.server.HandleFunc(h.config.Pattern, func(w http.ResponseWriter, r *http.Request) {
+func (h *HttpSubscriber) Handler(handler func(msg *domain.Message)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		//reqCtx := r.Context()
 		body, err := io.ReadAll(r.Body)
 
@@ -75,17 +68,66 @@ func (h *HttpSubscriber) Start(ctx context.Context, handler func(msg *domain.Mes
 		)
 
 		msg := domain.NewNewMessageWithoutAck(messageUUID, body, map[string]string{})
+		//msg := domain.NewNewMessageWithoutAck(messageUUID, body, headersAsMetadata)
+		preflightResultChan := make(chan error, 1)
+		msg.SetPreflightCallback(func(err error) {
+			preflightResultChan <- err
+		})
+
 		handler(msg)
 
-		//domainMsg := domain.NewMessage(m.ID, m.Data, m.Attributes, m.Ack, m.Nack)
-		//handler(domainMsg)
+		select {
+		case err = <-preflightResultChan:
+			if err != nil {
+				if h.errorResponder.Respond(w, r, err, h.logger, messageUUID) {
+					return // La respuesta de error ya fue enviada.
+				}
+			}
+		case <-time.After(5 * time.Second):
+			h.logger.Error("Timeout esperando el resultado del pre-vuelo del router", zap.String("uuid", messageUUID))
+			NewResponseBuilder().
+				WithId(messageUUID, uuid.New().String(), uuid.New().String()).
+				WithError("Internal processing timeout", "TIMEOUT").
+				WithStatus(http.StatusInternalServerError).
+				Build().Json(w, r)
+			return
+		}
 
 		NewResponseBuilder().
 			WithId(messageUUID, uuid.New().String(), uuid.New().String()).
-			WithInstance(r.Pattern).
-			Build().
-			Json(w, r)
-	})
+			Build().Json(w, r)
 
+		//processingErr := msg.ReportedError()
+
+		//if errors.Is(processingErr, domain.ErrNoRouteMatched) {
+		//	h.logger.Warn("Request rejected, no matching route found for command",
+		//		zap.String("uuid", messageUUID),
+		//		zap.String("path", h.config.Pattern),
+		//	)
+		//	NewResponseBuilder().
+		//		WithId(messageUUID, uuid.New().String(), uuid.New().String()).
+		//		WithInstance(r.URL.Path).
+		//		WithError("Command or event type not supported", "CMD-001").
+		//		WithStatus(http.StatusBadRequest).
+		//		Build().
+		//		Json(w, r)
+		//	return
+		//}
+		//
+		//NewResponseBuilder().
+		//	WithId(messageUUID, uuid.New().String(), uuid.New().String()).
+		//	WithInstance(r.Pattern).
+		//	Build().
+		//	Json(w, r)
+	}
+}
+
+func (h *HttpSubscriber) Start(ctx context.Context, handler func(msg *domain.Message)) error {
+	h.config.Logger.Info("HttpSubscriber Start")
+	//fn := h.Handler(handler)
+	//if h.config.Middleware != nil {
+	//	fn = h.config.Middleware(fn)
+	//}
+	h.server.HandleFunc(h.config.Pattern, h.Handler(handler))
 	return nil
 }

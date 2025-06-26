@@ -26,8 +26,8 @@ func RegisterEventHandlers(params EventParams, routers RouterParams, logger *zap
 
 	routers.HttpRouter.Register(
 		publisher,
-		nil,
-		map[string]string{},
+		jmspath.New("contains(['test', 'test-x'], name)", logger.Named("jmes-filter")),
+		Person{},
 		router.WrapHandler(handle),
 	)
 
