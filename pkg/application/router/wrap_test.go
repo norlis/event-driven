@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,7 @@ type MyData struct {
 	ID string
 }
 
-func mySpecificHandler(data MyData) (json.RawMessage, error) {
+func mySpecificHandler(_ context.Context, data MyData) (json.RawMessage, error) {
 	if data.ID == "error" {
 		return nil, errors.New("handler error")
 	}
@@ -26,7 +27,7 @@ func TestWrapHandler(t *testing.T) {
 	tests := []struct {
 		name           string
 		input          any
-		expectedOut    any
+		expectedOut    json.RawMessage
 		expectErr      bool
 		expectedErrMsg string
 	}{
@@ -64,7 +65,7 @@ func TestWrapHandler(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := wrapped(tt.input)
+			out, err := wrapped(context.Background(), tt.input)
 
 			if (err != nil) != tt.expectErr {
 				t.Fatalf("WrapHandler() error = %v, expectErr %v", err, tt.expectErr)

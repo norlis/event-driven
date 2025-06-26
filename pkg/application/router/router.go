@@ -47,7 +47,6 @@ type Router struct {
 // New creates a new Router for a given Subscription source (PubSub, HTTP, etc.)
 func New(cfg Config) *Router {
 	if cfg.Logger == nil {
-		// Fallback a un logger no-op si no se provee uno, aunque es mejor que la app lo configure.
 		cfg.Logger = zap.NewNop()
 	}
 	if cfg.WorkerDispatcher == nil {
@@ -98,7 +97,7 @@ func (r *Router) Run(ctx context.Context) error {
 				continue
 			}
 
-			preflightChain := chainMiddlewares(noopHandler, r.preflightMiddlewares...)
+			preflightChain := ChainMiddlewares(noopHandler, r.preflightMiddlewares...)
 			if _, preflightErr := preflightChain(context.Background(), eventPayload); preflightErr != nil {
 				msg.NotifyPreflightDone(preflightErr)
 				msg.Nack()
@@ -107,7 +106,7 @@ func (r *Router) Run(ctx context.Context) error {
 
 			msg.NotifyPreflightDone(nil)
 
-			effectiveHandler := chainMiddlewares(rt.Handler, r.middlewares...)
+			effectiveHandler := ChainMiddlewares(rt.Handler, r.middlewares...)
 
 			job := worker.Job{
 				Msg:       msg,
@@ -152,14 +151,4 @@ func (r *Router) Use(middlewares ...Middleware) {
 
 func (r *Router) UsePreflight(middlewares ...Middleware) {
 	r.preflightMiddlewares = append(r.preflightMiddlewares, middlewares...)
-}
-
-// chainMiddlewares aplica una cadena de middlewares a un handler.
-// Los middlewares se aplican en orden inverso (el último añadido es el más externo).
-func chainMiddlewares(handler HandlerFunc, mws ...Middleware) HandlerFunc {
-	chainedHandler := handler
-	for i := len(mws) - 1; i >= 0; i-- {
-		chainedHandler = mws[i](chainedHandler)
-	}
-	return chainedHandler
 }
