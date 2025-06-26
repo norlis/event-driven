@@ -3,7 +3,7 @@ package jmspath
 import (
 	"encoding/json"
 
-	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/domain/event"
 
 	"github.com/jmespath/go-jmespath"
 	"go.uber.org/zap"
@@ -21,7 +21,7 @@ func New(expr string, logger *zap.Logger) *JMESFilter {
 	return &JMESFilter{expr: expr, logger: logger}
 }
 
-func (f *JMESFilter) Match(msg *domain.Message) bool {
+func (f *JMESFilter) Match(msg *event.Message) bool {
 	var data map[string]any
 	if err := json.Unmarshal(msg.Payload, &data); err != nil {
 		f.logger.Error(

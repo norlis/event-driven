@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/domain/event"
 
 	"go.uber.org/zap/zaptest"
 )
 
 // Mock para domain.Publisher usado en el worker
 type mockWorkerPublisher struct {
-	PublishFunc func(msg *domain.Message) error
+	PublishFunc func(msg *event.Message) error
 	Called      bool
 }
 
-func (m *mockWorkerPublisher) Publish(msg *domain.Message) error {
+func (m *mockWorkerPublisher) Publish(msg *event.Message) error {
 	m.Called = true
 	if m.PublishFunc != nil {
 		return m.PublishFunc(msg)
@@ -38,14 +38,14 @@ func TestWorker_Start_ProcessJobAndAck(t *testing.T) {
 	mockMsgAckCalled := false
 	mockMsgNackCalled := false
 
-	mockMsg := domain.NewMessage("uuid-test", []byte("payload"), nil,
+	mockMsg := event.NewMessage("uuid-test", []byte("payload"), nil,
 		func() { mockMsgAckCalled = true },  // AckFunc
 		func() { mockMsgNackCalled = true }, // NackFunc
 	)
 
 	job := Job{
 		Msg: mockMsg,
-		Handler: func(msg *domain.Message) (any, error) {
+		Handler: func(msg *event.Message) (any, error) {
 			handlerCalled = true
 			return "result", nil // Handler exitoso
 		},
@@ -86,14 +86,14 @@ func TestWorker_Start_ProcessJobAndNackOnError(t *testing.T) {
 	mockMsgNackCalled := false
 	expectedError := errors.New("handler processing error")
 
-	mockMsg := domain.NewMessage("uuid-test-nack", []byte("payload"), nil,
+	mockMsg := event.NewMessage("uuid-test-nack", []byte("payload"), nil,
 		func() { mockMsgAckCalled = true },
 		func() { mockMsgNackCalled = true },
 	)
 
 	job := Job{
 		Msg: mockMsg,
-		Handler: func(msg *domain.Message) (any, error) {
+		Handler: func(msg *event.Message) (any, error) {
 			handlerCalled = true
 			return nil, expectedError // Handler falla
 		},
@@ -130,14 +130,14 @@ func TestWorker_Start_ProcessJobAndPublish(t *testing.T) {
 	mockPub := &mockWorkerPublisher{}
 	mockMsgAckCalled := false
 
-	mockMsg := domain.NewMessage("uuid-test-publish", []byte("payload"), nil,
+	mockMsg := event.NewMessage("uuid-test-publish", []byte("payload"), nil,
 		func() { mockMsgAckCalled = true },
 		func() {},
 	)
 
 	job := Job{
 		Msg:       mockMsg,
-		Handler:   func(msg *domain.Message) (any, error) { return "result", nil },
+		Handler:   func(msg *event.Message) (any, error) { return "result", nil },
 		Publisher: mockPub,
 	}
 

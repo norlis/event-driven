@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"runtime/debug"
 
-	"github.com/norlis/event-driven/pkg/usecase/router"
+	"github.com/norlis/event-driven/pkg/application/router"
 
 	"github.com/pkg/errors"
 )

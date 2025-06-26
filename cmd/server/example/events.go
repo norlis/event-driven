@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/norlis/event-driven/pkg/domain"
-	"github.com/norlis/event-driven/pkg/infrastructure/jmspath"
-	"github.com/norlis/event-driven/pkg/usecase/router"
+	"github.com/norlis/event-driven/pkg/port"
+
+	"github.com/norlis/event-driven/pkg/adapter/jmspath"
+	"github.com/norlis/event-driven/pkg/application/router"
 	"go.uber.org/zap"
 )
 
@@ -16,7 +17,7 @@ func handle(ctx context.Context, event map[string]any) (json.RawMessage, error) 
 	return []byte(`{"status": "OK"}`), nil
 }
 
-func RegisterEventHandlers(params EventParams, routers RouterParams, logger *zap.Logger, publisher domain.Publisher) {
+func RegisterEventHandlers(params EventParams, routers RouterParams, logger *zap.Logger, publisher port.Publisher) {
 	routers.PrincipalRouter.Register(
 		publisher,
 		jmspath.New("contains(['040', '041'], encabezado.codEvento)", logger.Named("jmes-filter")),

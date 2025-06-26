@@ -5,10 +5,11 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/norlis/event-driven/pkg/port"
+
 	"cloud.google.com/go/pubsub"
 	"github.com/norlis/event-driven/cmd/server/example"
-	"github.com/norlis/event-driven/pkg/domain"
-	"github.com/norlis/event-driven/pkg/usecase/worker"
+	"github.com/norlis/event-driven/pkg/application/worker"
 	"github.com/norlis/httpgate/pkg/health"
 	"github.com/norlis/httpgate/pkg/middleware"
 	"github.com/norlis/httpgate/pkg/opa"
@@ -30,7 +31,7 @@ type AppComponents struct {
 	Dispatcher     *worker.Dispatcher
 	Routers        example.RouterParams // Contiene PrincipalRouter y TraceRouter
 	EventParams    example.EventParams  // Contiene Handler1, etc. para RegisterEventHandlers
-	EventPublisher domain.Publisher     // Si lo necesitas para RegisterEventHandlers
+	EventPublisher port.Publisher       // Si lo necesitas para RegisterEventHandlers
 	// Añade aquí cualquier otra dependencia que RegisterEventHandlers o la lógica de inicio necesite
 }
 

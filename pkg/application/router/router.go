@@ -5,30 +5,29 @@ import (
 	"encoding/json"
 	"reflect"
 
+	"github.com/norlis/event-driven/pkg/domain/event"
+	"github.com/norlis/event-driven/pkg/port"
+
+	"github.com/norlis/event-driven/pkg/application/worker"
 	"github.com/norlis/event-driven/pkg/domain"
-	"github.com/norlis/event-driven/pkg/usecase/worker"
 	"go.uber.org/zap"
 )
 
 var noopHandler = func(ctx context.Context, data any) (json.RawMessage, error) { return nil, nil }
 
-type Filter interface {
-	Match(msg *domain.Message) bool
-}
-
 type HandlerFunc func(ctx context.Context, data any) (json.RawMessage, error)
 
 type Route struct {
-	Pub        domain.Publisher
-	Filter     Filter
+	Pub        port.Publisher
+	Filter     port.Filter
 	Handler    HandlerFunc
 	ObjectType any
 }
 
 // Config contiene la configuración para el Router.
 type Config struct {
-	Subscription     domain.Subscription // Fuente de mensajes
-	WorkerDispatcher *worker.Dispatcher  // Dispatcher para procesar trabajos
+	Subscription     port.Subscription  // Fuente de mensajes
+	WorkerDispatcher *worker.Dispatcher // Dispatcher para procesar trabajos
 	Logger           *zap.Logger
 
 	// ReportOnNoMatch, si es true, marcará un mensaje con el estado
@@ -61,7 +60,7 @@ func New(cfg Config) *Router {
 }
 
 // Register añade una nueva ruta al router.
-func (r *Router) Register(pub domain.Publisher, filter Filter, objectType any, handler HandlerFunc) {
+func (r *Router) Register(pub port.Publisher, filter port.Filter, objectType any, handler HandlerFunc) {
 	r.routes = append(r.routes, Route{
 		Pub:        pub,
 		Filter:     filter,
@@ -75,7 +74,7 @@ func (r *Router) Register(pub domain.Publisher, filter Filter, objectType any, h
 func (r *Router) Run(ctx context.Context) error {
 	r.cfg.Logger.Info("Router iniciando, comenzando suscripción...")
 
-	return r.cfg.Subscription.Start(ctx, func(msg *domain.Message) {
+	return r.cfg.Subscription.Start(ctx, func(msg *event.Message) {
 		r.cfg.Logger.Debug("Router recibió mensaje de la suscripción", zap.String("messageUUID", msg.UUID))
 		matchedAtLeastOneRoute := false
 		for _, rt := range r.routes {
@@ -113,7 +112,7 @@ func (r *Router) Run(ctx context.Context) error {
 			job := worker.Job{
 				Msg:       msg,
 				Publisher: rt.Pub,
-				Handler: func(ctx context.Context, processedMsg *domain.Message) (json.RawMessage, error) {
+				Handler: func(ctx context.Context, processedMsg *event.Message) (json.RawMessage, error) {
 					return effectiveHandler(ctx, eventPayload)
 				},
 			}

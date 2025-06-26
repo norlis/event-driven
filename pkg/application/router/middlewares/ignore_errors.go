@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/norlis/event-driven/pkg/usecase/router"
+	"github.com/norlis/event-driven/pkg/application/router"
 	"go.uber.org/zap"
 )
 

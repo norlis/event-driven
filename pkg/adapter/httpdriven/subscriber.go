@@ -2,13 +2,15 @@ package httpdriven
 
 import (
 	"context"
-	"github.com/norlis/httpgate/pkg/middleware"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/norlis/event-driven/pkg/domain/event"
+	"github.com/norlis/event-driven/pkg/port"
+	"github.com/norlis/httpgate/pkg/middleware"
+
 	"github.com/google/uuid"
-	"github.com/norlis/event-driven/pkg/domain"
 	"go.uber.org/zap"
 )
 
@@ -25,7 +27,7 @@ type HttpSubscriber struct {
 	errorResponder *HTTPErrorResponder
 }
 
-func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (domain.Subscription, error) {
+func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (port.Subscription, error) {
 
 	return &HttpSubscriber{
 		server:         server,
@@ -35,7 +37,7 @@ func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (domain.Subscrip
 	}, nil
 }
 
-func (h *HttpSubscriber) Handler(handler func(msg *domain.Message)) http.HandlerFunc {
+func (h *HttpSubscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		//reqCtx := r.Context()
 		body, err := io.ReadAll(r.Body)
@@ -67,7 +69,7 @@ func (h *HttpSubscriber) Handler(handler func(msg *domain.Message)) http.Handler
 			zap.String("path", h.config.Pattern),
 		)
 
-		msg := domain.NewNewMessageWithoutAck(messageUUID, body, map[string]string{})
+		msg := event.NewNewMessageWithoutAck(messageUUID, body, map[string]string{})
 		//msg := domain.NewNewMessageWithoutAck(messageUUID, body, headersAsMetadata)
 		preflightResultChan := make(chan error, 1)
 		msg.SetPreflightCallback(func(err error) {
@@ -122,7 +124,7 @@ func (h *HttpSubscriber) Handler(handler func(msg *domain.Message)) http.Handler
 	}
 }
 
-func (h *HttpSubscriber) Start(ctx context.Context, handler func(msg *domain.Message)) error {
+func (h *HttpSubscriber) Start(ctx context.Context, handler func(msg *event.Message)) error {
 	h.config.Logger.Info("HttpSubscriber Start")
 	//fn := h.Handler(handler)
 	//if h.config.Middleware != nil {
