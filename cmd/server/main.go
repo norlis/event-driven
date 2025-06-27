@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -38,7 +39,18 @@ type AppComponents struct {
 	// Añade aquí cualquier otra dependencia que RegisterEventHandlers o la lógica de inicio necesite
 }
 
+// banner
+// https://patorjk.com/software/taag/#p=display&f=DiamFont&t=EXAMPLE
+const banner = `
+▗▄▄▄▖▗▖  ▗▖ ▗▄▖ ▗▖  ▗▖▗▄▄▖ ▗▖   ▗▄▄▄▖
+▐▌    ▝▚▞▘ ▐▌ ▐▌▐▛▚▞▜▌▐▌ ▐▌▐▌   ▐▌   
+▐▛▀▀▘  ▐▌  ▐▛▀▜▌▐▌  ▐▌▐▛▀▘ ▐▌   ▐▛▀▀▘
+▐▙▄▄▖▗▞▘▝▚▖▐▌ ▐▌▐▌  ▐▌▐▌   ▐▙▄▄▖▐▙▄▄▖
+`
+
 func main() {
+
+	fmt.Print(banner)
 	//ctx := context.Background()
 
 	app := fx.New(
