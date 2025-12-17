@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
+	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type GooglePubSubHealthCheckerOption func(*GooglePubSubHealthChecker)
@@ -26,52 +29,64 @@ func WithSubscriptions(subscriptions ...string) GooglePubSubHealthCheckerOption 
 
 type GooglePubSubHealthChecker struct {
 	client        *pubsub.Client
+	projectID     string
 	topics        []string
 	subscriptions []string
 }
 
 func (p *GooglePubSubHealthChecker) Check() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second) // Aumentamos el timeout para múltiples llamadas
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	var errs []error
 
+	// Check topics using TopicAdminClient
+	topicAdmin := p.client.TopicAdminClient
 	for _, topicID := range p.topics {
 		if topicID == "" {
 			continue
 		}
-		topic := p.client.Topic(topicID)
-		exists, err := topic.Exists(ctx)
+		topicPath := fmt.Sprintf("projects/%s/topics/%s", p.projectID, topicID)
+		_, err := topicAdmin.GetTopic(ctx, &pubsubpb.GetTopicRequest{
+			Topic: topicPath,
+		})
 		if err != nil {
-			errs = append(errs, fmt.Errorf("error checking topic %s: %w", topicID, err))
+			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+				errs = append(errs, fmt.Errorf("required topic '%s' does not exist", topicID))
+			} else {
+				errs = append(errs, fmt.Errorf("error checking topic %s: %w", topicID, err))
+			}
 			continue
-		}
-		if !exists {
-			errs = append(errs, fmt.Errorf("required topic '%s' does not exist", topicID))
 		}
 	}
 
+	// Check subscriptions using SubscriptionAdminClient
+	subAdmin := p.client.SubscriptionAdminClient
 	for _, subID := range p.subscriptions {
 		if subID == "" {
 			continue
 		}
-		sub := p.client.Subscription(subID)
-		exists, err := sub.Exists(ctx)
+		subPath := fmt.Sprintf("projects/%s/subscriptions/%s", p.projectID, subID)
+		_, err := subAdmin.GetSubscription(ctx, &pubsubpb.GetSubscriptionRequest{
+			Subscription: subPath,
+		})
 		if err != nil {
-			errs = append(errs, fmt.Errorf("error checking subscription %s: %w", subID, err))
+			if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+				errs = append(errs, fmt.Errorf("required subscription '%s' does not exist", subID))
+			} else {
+				errs = append(errs, fmt.Errorf("error checking subscription %s: %w", subID, err))
+			}
 			continue
-		}
-		if !exists {
-			errs = append(errs, fmt.Errorf("required subscription '%s' does not exist", subID))
 		}
 	}
 
 	return multierr.Combine(errs...)
 }
 
-func NewGooglePubSubHealthChecker(client *pubsub.Client, opts ...GooglePubSubHealthCheckerOption) *GooglePubSubHealthChecker {
+func NewGooglePubSubHealthChecker(client *pubsub.Client, projectID string, opts ...GooglePubSubHealthCheckerOption) *GooglePubSubHealthChecker {
 	checker := &GooglePubSubHealthChecker{
 		client:        client,
+		projectID:     projectID,
 		topics:        []string{},
 		subscriptions: []string{},
 	}

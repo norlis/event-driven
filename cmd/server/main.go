@@ -1,21 +1,22 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
 
+	pb "github.com/norlis/event-driven/pkg/adapter/pubsub"
+	port2 "github.com/norlis/httpgate/pkg/port"
+
 	"github.com/norlis/httpgate/pkg/adapter/apidriven/presenters"
 
 	"github.com/norlis/event-driven/pkg/port"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"github.com/norlis/event-driven/cmd/server/example"
 	"github.com/norlis/event-driven/pkg/application/worker"
 	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
-	"github.com/norlis/httpgate/pkg/adapter/opa"
 	"github.com/norlis/httpgate/pkg/application/health"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -92,23 +93,39 @@ func main() {
 		}),
 		fx.Provide(presenters.NewPresenters),
 		fx.Invoke(example.RegisterEventHandlers),
-		fx.Invoke(func(router *http.ServeMux, status *health.Status, logger *zap.Logger, render presenters.Presenters) {
+		fx.Provide(func(client *pubsub.Client, cfg *example.Configuration) *pb.GooglePubSubHealthChecker {
+			return pb.NewGooglePubSubHealthChecker(
+				client,
+				cfg.Cloud.GCloudProjectId,
+				pb.WithTopics(cfg.Messaging.PublishDestinationTopic),
+				pb.WithSubscriptions(cfg.Messaging.SubscribeDestination),
+			)
+		}),
+		fx.Invoke(func(router *http.ServeMux, status *health.Status, logger *zap.Logger, render presenters.Presenters, checker *pb.GooglePubSubHealthChecker) {
 
-			opaConfig := opa.Config{
-				Query:        "data.authz.allow",
-				PoliciesPath: "policies/authz", // Directorio con authz.rego
-				DataFiles: []string{
-					//"policies/authz/whitelist.json",
-					//"policies/authz/roles.json",
-					//"policies/authz/permissions.json",
-				},
-			}
+			// pprof
+			// "net/http/pprof"
+			//router.HandleFunc("GET /debug/pprof/", pprof.Index)
+			//router.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+			//router.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+			//router.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+			//router.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
 
-			authz, err := opa.NewOpaSdkClientFromConfig(context.Background(), opaConfig, logger)
+			//opaConfig := opa.Config{
+			//	Query:        "data.authz.allow",
+			//	PoliciesPath: "policies/authz", // Directorio con authz.rego
+			//	DataFiles: []string{
+			//		//"policies/authz/whitelist.json",
+			//		//"policies/authz/roles.json",
+			//		//"policies/authz/permissions.json",
+			//	},
+			//}
 
-			if err != nil {
-				log.Fatalf("No se pudo inicializar el cliente OPA: %v", err)
-			}
+			//authz, err := opa.NewOpaSdkClientFromConfig(context.Background(), opaConfig, logger)
+
+			//if err != nil {
+			//	log.Fatalf("No se pudo inicializar el cliente OPA: %v", err)
+			//}
 
 			commons := []middleware.Middleware{
 				middleware.Recover(logger, render),
@@ -126,12 +143,12 @@ func main() {
 			}
 
 			public := middleware.Chain(commons...)
-			protected := middleware.Chain(
-				append(
-					commons,
-					[]middleware.Middleware{middleware.AuthorizationMiddleware(authz)}...,
-				)...,
-			)
+			//protected := middleware.Chain(
+			//	append(
+			//		commons,
+			//		[]middleware.Middleware{middleware.AuthorizationMiddleware(authz, FromContextExtractor)}...,
+			//	)...,
+			//)
 
 			//use := httpmiddleware.Chain(
 			//	httpmiddleware.Recover(logger),
@@ -143,7 +160,9 @@ func main() {
 
 			base.Handle("GET /status", status)
 			base.Handle("GET /live", health.NewProbe(nil))
-			base.Handle("GET /ready", health.NewProbe(nil)) // listo para aceptar trafico
+			base.Handle("GET /ready", health.NewProbe(map[string]port2.Checker{
+				"pub/sub": checker,
+			})) // listo para aceptar trafico
 
 			api := http.NewServeMux()
 			api.HandleFunc("GET /test", func(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +172,8 @@ func main() {
 			})
 
 			router.Handle("/", public(base))
-			router.Handle("/api/", protected(http.StripPrefix("/api", api)))
+			router.Handle("/api/", public(http.StripPrefix("/api", api)))
+			//router.Handle("/api/", protected(http.StripPrefix("/api", api)))
 			//router.Handle("/api/", use(api))
 		}),
 	)

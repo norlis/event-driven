@@ -12,7 +12,7 @@ import (
 
 	"github.com/norlis/event-driven/pkg/port"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"github.com/norlis/event-driven/pkg/adapter/httpdriven"
 	messaging "github.com/norlis/event-driven/pkg/adapter/pubsub"
 	"github.com/norlis/event-driven/pkg/application/router"

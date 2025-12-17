@@ -39,7 +39,7 @@ type Config struct {
 
 type Router struct {
 	cfg                  Config
-	routes               []Route
+	routes               []*Route
 	middlewares          []Middleware
 	preflightMiddlewares []Middleware // Middlewares síncronos para validación
 }
@@ -60,7 +60,7 @@ func New(cfg Config) *Router {
 
 // Register añade una nueva ruta al router.
 func (r *Router) Register(pub port.Publisher, filter port.Filter, objectType any, handler HandlerFunc) {
-	r.routes = append(r.routes, Route{
+	r.routes = append(r.routes, &Route{
 		Pub:        pub,
 		Filter:     filter,
 		Handler:    handler,
@@ -75,74 +75,77 @@ func (r *Router) Run(ctx context.Context) error {
 
 	return r.cfg.Subscription.Start(ctx, func(msg *event.Message) {
 		r.cfg.Logger.Debug("Router recibió mensaje de la suscripción", zap.String("messageUUID", msg.UUID))
-		matchedAtLeastOneRoute := false
-		for _, rt := range r.routes {
-			if rt.Filter != nil && !rt.Filter.Match(msg) {
-				r.cfg.Logger.Debug("Mensaje no coincide con el filtro para una ruta", zap.String("messageUUID", msg.UUID))
-				continue
-			}
-			matchedAtLeastOneRoute = true
-			r.cfg.Logger.Debug("Mensaje coincide con filtro (o no hay filtro), procesando ruta...", zap.String("messageUUID", msg.UUID))
 
-			eventPayload, err := NewInterface(reflect.TypeOf(rt.ObjectType), msg.Payload)
-			if err != nil {
-				r.cfg.Logger.Error("Error al desempaquetar payload para la ruta",
-					zap.Error(err),
-					zap.String("messageUUID", msg.UUID),
-					zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
-					zap.Any("event", msg.Payload),
-				)
-				msg.NotifyPreflightDone(err)
-				msg.Nack()
-				continue
-			}
-
-			preflightChain := ChainMiddlewares(noopHandler, r.preflightMiddlewares...)
-			if _, preflightErr := preflightChain(context.Background(), eventPayload); preflightErr != nil {
-				msg.NotifyPreflightDone(preflightErr)
-				msg.Nack()
-				return
-			}
-
-			msg.NotifyPreflightDone(nil)
-
-			effectiveHandler := ChainMiddlewares(rt.Handler, r.middlewares...)
-
-			job := worker.Job{
-				Msg:       msg,
-				Publisher: rt.Pub,
-				Handler: func(ctx context.Context, processedMsg *event.Message) (json.RawMessage, error) {
-					return effectiveHandler(ctx, eventPayload)
-				},
-			}
-
-			// Enviar el trabajo al JobQueue del dispatcher.
-			// Esto podría bloquear si la cola está llena. Considerar select con ctx.Done().
-			select {
-			case r.cfg.WorkerDispatcher.JobQueue <- job:
-				r.cfg.Logger.Debug("Trabajo enviado al dispatcher", zap.String("messageUUID", msg.UUID))
-			case <-ctx.Done():
-				r.cfg.Logger.Warn("Contexto cancelado, no se pudo enviar trabajo al dispatcher", zap.String("messageUUID", msg.UUID))
-				msg.Nack()
-				return
-				// enlocar
-				//case <-time.After(5 *time.Second): // Timeout para encolar
-				//	r.cfg.Logger.Warn("Timeout esperando para enviar trabajo al JobQueue (cola llena o workers lentos)",
-				//		zap.String("messageUUID", msg.UUID),
-				//		zap.Duration("timeout", 5 *time.Second))
-				//	msg.Nack()
-			}
-
+		matchingRoute := r.findMatchingRoute(msg)
+		if matchingRoute == nil {
+			r.handleNoRouteFound(msg)
+			return
 		}
 
-		if !matchedAtLeastOneRoute {
-			r.cfg.Logger.Debug("Mensaje no coincidió con ninguna ruta", zap.String("messageUUID", msg.UUID))
-			if r.cfg.ReportOnNoMatch {
-				msg.NotifyPreflightDone(domain.ErrNoRouteMatched)
-			}
-			msg.Ack() // Ack si no hay rutas coincidentes, para evitar que quede en la cola.
-		}
+		r.cfg.Logger.Debug("Mensaje coincide con filtro, procesando ruta...", zap.String("messageUUID", msg.UUID))
+		r.processAndDispatchJob(ctx, msg, matchingRoute)
 	})
+}
+
+// findMatchingRoute encuentra la primera ruta que coincide con el filtro del mensaje.
+func (r *Router) findMatchingRoute(msg *event.Message) *Route {
+	for _, rt := range r.routes {
+		if rt.Filter == nil || rt.Filter.Match(msg) {
+			return rt
+		}
+	}
+	return nil
+}
+
+// handleNoRouteFound maneja los mensajes que no coinciden con ninguna ruta.
+func (r *Router) handleNoRouteFound(msg *event.Message) {
+	r.cfg.Logger.Debug("Mensaje no coincidió con ninguna ruta", zap.String("messageUUID", msg.UUID))
+	if r.cfg.ReportOnNoMatch {
+		msg.NotifyPreflightDone(domain.ErrNoRouteMatched)
+	}
+	msg.Ack() // Ack para evitar que quede en la cola.
+}
+
+// processAndDispatchJob se encarga de las comprobaciones previas y de despachar el trabajo al worker.
+func (r *Router) processAndDispatchJob(ctx context.Context, msg *event.Message, rt *Route) {
+	eventPayload, err := NewInterface(reflect.TypeOf(rt.ObjectType), msg.Payload)
+	if err != nil {
+		r.cfg.Logger.Error("Error al desempaquetar payload para la ruta",
+			zap.Error(err),
+			zap.String("messageUUID", msg.UUID),
+			zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
+		)
+		msg.NotifyPreflightDone(err)
+		msg.Nack()
+		return
+	}
+
+	preflightChain := ChainMiddlewares(noopHandler, r.preflightMiddlewares...)
+	if _, preflightErr := preflightChain(context.Background(), eventPayload); preflightErr != nil {
+		msg.NotifyPreflightDone(preflightErr)
+		msg.Nack()
+		return
+	}
+
+	msg.NotifyPreflightDone(nil)
+
+	effectiveHandler := ChainMiddlewares(rt.Handler, r.middlewares...)
+
+	job := worker.Job{
+		Msg:       msg,
+		Publisher: rt.Pub,
+		Handler: func(ctx context.Context, processedMsg *event.Message) (json.RawMessage, error) {
+			return effectiveHandler(ctx, eventPayload)
+		},
+	}
+
+	select {
+	case r.cfg.WorkerDispatcher.JobQueue <- job:
+		r.cfg.Logger.Debug("Trabajo enviado al dispatcher", zap.String("messageUUID", msg.UUID))
+	case <-ctx.Done():
+		r.cfg.Logger.Warn("Contexto cancelado, no se pudo enviar trabajo al dispatcher", zap.String("messageUUID", msg.UUID))
+		msg.Nack()
+	}
 }
 
 func (r *Router) Use(middlewares ...Middleware) {

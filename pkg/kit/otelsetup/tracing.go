@@ -31,7 +31,6 @@ func InitTracerProvider(ctx context.Context, serviceName string, serviceVersion 
 	// Asegúrate de que Tempo esté accesible en tempoEndpoint (ej. "localhost:4317")
 	conn, err := grpc.NewClient(tempoEndpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()), // Para conexiones locales sin TLS
-		grpc.WithBlock(), // Esperar a que la conexión se establezca
 	)
 	if err != nil {
 		return nil, fmt.Errorf("fallo al crear conexión gRPC con el colector OTLP: %w", err)

@@ -71,8 +71,8 @@ func TestWorker_Start_ProcessJobAndAck(t *testing.T) {
 		t.Error("No se esperaba que Message.Nack() fuera llamado")
 	}
 
-	workerInstance.Stop() // Detener el worker
-	wg.Wait()             // Esperar que la goroutine del worker termine
+	close(jobQueue) // Cerrar el canal para detener el worker
+	wg.Wait()       // Esperar que la goroutine del worker termine
 }
 
 func TestWorker_Start_ProcessJobAndNackOnError(t *testing.T) {
@@ -118,7 +118,7 @@ func TestWorker_Start_ProcessJobAndNackOnError(t *testing.T) {
 		t.Error("Se esperaba que Message.Nack() fuera llamado")
 	}
 
-	workerInstance.Stop()
+	close(jobQueue) // Cerrar el canal para detener el worker
 	wg.Wait()
 }
 
@@ -156,7 +156,7 @@ func TestWorker_Start_ProcessJobAndPublish(t *testing.T) {
 		t.Error("Se esperaba que Publisher.Publish() fuera llamado")
 	}
 
-	workerInstance.Stop()
+	close(jobQueue) // Cerrar el canal para detener el worker
 	wg.Wait()
 }
 
@@ -170,7 +170,7 @@ func TestWorker_Stop(t *testing.T) {
 	workerInstance := NewWorker(1, jobQueue, &wg, logger)
 	workerInstance.Start(workerEnded)
 
-	workerInstance.Stop() // Enviar señal de quit
+	close(jobQueue) // Cerrar el canal para detener el worker
 
 	// Esperar a que el WaitGroup termine, con un timeout para evitar que el test se cuelgue.
 	waitChan := make(chan struct{})
@@ -183,7 +183,7 @@ func TestWorker_Stop(t *testing.T) {
 	case <-waitChan:
 		// El worker terminó correctamente
 	case <-time.After(1 * time.Second): // Timeout razonable
-		t.Fatal("Se esperaba que el worker terminara después de Stop(), pero hizo timeout")
+		t.Fatal("Se esperaba que el worker terminara después de cerrar el canal, pero hizo timeout")
 	}
 }
 

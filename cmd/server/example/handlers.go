@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
 	"github.com/norlis/event-driven/pkg/application/router/metadata"
 
 	"go.uber.org/zap"

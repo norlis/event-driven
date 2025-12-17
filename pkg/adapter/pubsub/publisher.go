@@ -6,7 +6,7 @@ import (
 
 	"github.com/norlis/event-driven/pkg/domain/event"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"go.uber.org/zap"
 )
 
@@ -31,10 +31,10 @@ func NewPublisher(client *pubsub.Client, cfg PublisherConfig, logger *zap.Logger
 
 func (p *GCPPublisher) Publish(msg *event.Message) error {
 	ctx := context.Background() // TODO: Considerar pasar contexto si es necesario para timeouts
-	topic := p.client.Topic(p.topicID)
-	defer topic.Stop() // Importante para limpiar recursos del publicador del topic
+	publisher := p.client.Publisher(p.topicID)
+	defer publisher.Stop() // Importante para limpiar recursos del publicador del topic
 
-	result := topic.Publish(ctx, &pubsub.Message{
+	result := publisher.Publish(ctx, &pubsub.Message{
 		Data:       msg.Payload,
 		Attributes: msg.Metadata,
 	})

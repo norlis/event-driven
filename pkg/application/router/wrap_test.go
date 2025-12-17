@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,7 +78,7 @@ func TestWrapHandler(t *testing.T) {
 				}
 			}
 
-			if !tt.expectErr && out != tt.expectedOut {
+			if !tt.expectErr && !bytes.Equal(out, tt.expectedOut) {
 				t.Errorf("WrapHandler() out = %v, want %v", out, tt.expectedOut)
 			}
 		})

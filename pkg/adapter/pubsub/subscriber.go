@@ -8,7 +8,7 @@ import (
 
 	"github.com/norlis/event-driven/pkg/domain/event"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"go.uber.org/zap"
 )
 
@@ -38,21 +38,21 @@ func NewSubscription(client *pubsub.Client, cfg SubscriberConfig, logger *zap.Lo
 }
 
 func (s *GCPSubscription) Start(ctx context.Context, handler func(msg *event.Message)) error {
-	sub := s.client.Subscription(s.cfg.SubscriptionID)
+	subscriber := s.client.Subscriber(s.cfg.SubscriptionID)
 
-	sub.ReceiveSettings.MaxOutstandingMessages = s.cfg.MaxOutstandingMessages
-	sub.ReceiveSettings.MaxOutstandingBytes = s.cfg.MaxOutstandingBytes
-	sub.ReceiveSettings.NumGoroutines = s.cfg.NumGoroutines
-	sub.ReceiveSettings.MaxExtension = s.cfg.MaxExtension
+	subscriber.ReceiveSettings.MaxOutstandingMessages = s.cfg.MaxOutstandingMessages
+	subscriber.ReceiveSettings.MaxOutstandingBytes = s.cfg.MaxOutstandingBytes
+	subscriber.ReceiveSettings.NumGoroutines = s.cfg.NumGoroutines
+	subscriber.ReceiveSettings.MaxExtension = s.cfg.MaxExtension
 
 	s.logger.Info("Iniciando recepción de mensajes Pub/Sub",
 		zap.String("subscriptionID", s.cfg.SubscriptionID),
-		zap.Int("maxOutstandingMessages", sub.ReceiveSettings.MaxOutstandingMessages),
-		zap.Int("numGoroutines", sub.ReceiveSettings.NumGoroutines),
+		zap.Int("maxOutstandingMessages", subscriber.ReceiveSettings.MaxOutstandingMessages),
+		zap.Int("numGoroutines", subscriber.ReceiveSettings.NumGoroutines),
 	)
 
-	// sub.Receive es bloqueante. Se ejecutará hasta que ctx sea cancelado o ocurra un error fatal.
-	err := sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
+	// subscriber.Receive es bloqueante. Se ejecutará hasta que ctx sea cancelado o ocurra un error fatal.
+	err := subscriber.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		s.logger.Debug("Mensaje Pub/Sub recibido", zap.String("messageID", m.ID), zap.Any("attributes", m.Attributes))
 
 		// Envolver el mensaje de pubsub.Message en domain.Message,

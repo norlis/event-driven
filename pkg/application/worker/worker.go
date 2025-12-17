@@ -3,10 +3,11 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"sync"
+
 	"github.com/norlis/event-driven/pkg/application/router/metadata"
 	"github.com/norlis/event-driven/pkg/domain/event"
 	"github.com/norlis/event-driven/pkg/port"
-	"sync"
 
 	"go.uber.org/zap"
 )
