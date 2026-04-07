@@ -4,19 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/norlis/event-driven/pkg/application/router/metadata"
-
 	"go.uber.org/zap"
 )
 
 type Person struct {
-	Name string `name:"name" validate:"required" json:"name"`
-	Age  int    `name:"age" validate:"required" json:"age"`
+	Name string `json:"name" name:"name" validate:"required"`
+	Age  int    `json:"age"  name:"age"  validate:"required"`
 }
 
-var ErrInvalidObject = errors.New("objeto inválido")
-var ErrDataNotFound = errors.New("datos no encontrados pero no es crítico")
+var (
+	ErrInvalidObject = errors.New("objeto inválido")
+	ErrDataNotFound  = errors.New("datos no encontrados pero no es crítico")
+)
 
 type UseCaseExample interface {
 	Execute(ctx context.Context, event Person) (json.RawMessage, error)
@@ -32,24 +34,23 @@ type handler struct {
 }
 
 func (h *handler) Execute(ctx context.Context, event Person) (json.RawMessage, error) {
-
 	if envelope, ok := metadata.FromContext(ctx); ok {
 		envelope.Set("eventName", "test")
 	}
 
 	h.logger.Info("Processing event from sub", zap.Any("event", event))
 
-	//panic("test")
+	// panic("test")
 
 	return []byte(`{"success": true}`), nil
 
 	// no publish
-	//return nil, nil
+	// return nil, nil
 
-	//err := errors.New("ErrValidate")
-	//h.logger.Error("ErrValidate", zap.Error(err))
+	// err := errors.New("ErrValidate")
+	// h.logger.Error("ErrValidate", zap.Error(err))
 	//
-	//return nil, errors.New("no data")
+	// return nil, errors.New("no data")
 }
 
 func (h *handler) Command(ctx context.Context, evt Person) (json.RawMessage, error) {
@@ -61,5 +62,9 @@ func (h *handler) Command(ctx context.Context, evt Person) (json.RawMessage, err
 		envelope.Set("name", evt.Name)
 	}
 
-	return json.Marshal(evt)
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return nil, fmt.Errorf("marshal person: %w", err)
+	}
+	return data, nil
 }

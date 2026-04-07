@@ -80,7 +80,10 @@ func (p *GooglePubSubHealthChecker) Check() error {
 		}
 	}
 
-	return multierr.Combine(errs...)
+	if combined := multierr.Combine(errs...); combined != nil {
+		return fmt.Errorf("pubsub health check: %w", combined)
+	}
+	return nil
 }
 
 func NewGooglePubSubHealthChecker(client *pubsub.Client, projectID string, opts ...GooglePubSubHealthCheckerOption) *GooglePubSubHealthChecker {

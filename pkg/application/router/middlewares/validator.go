@@ -3,7 +3,6 @@ package middlewares
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/norlis/event-driven/pkg/application/router"
@@ -16,7 +15,7 @@ type ValidationError struct {
 }
 
 func (v ValidationError) Error() string {
-	return fmt.Sprintf("validation failed: %s", v.OriginalError.Error())
+	return "validation failed: " + v.OriginalError.Error()
 }
 
 // ValidationMiddleware crea un middleware que valida la estructura de datos de entrada.

@@ -40,7 +40,6 @@ func NewIgnoreErrors(logger *zap.Logger, predicates ...ErrorPredicate) IgnoreErr
 func (i IgnoreErrors) Middleware(next router.HandlerFunc) router.HandlerFunc {
 	return func(ctx context.Context, data any) (result json.RawMessage, err error) {
 		result, err = next(ctx, data)
-
 		if err != nil {
 			for _, predicate := range i.predicates {
 				if predicate.Matches(err) { // Llama a la función Matches del predicado

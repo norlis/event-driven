@@ -1,10 +1,9 @@
 package example
 
 import (
-	"github.com/norlis/event-driven/pkg/port"
-
 	"github.com/norlis/event-driven/pkg/adapter/jmspath"
 	"github.com/norlis/event-driven/pkg/application/router"
+	"github.com/norlis/event-driven/pkg/port"
 	"go.uber.org/zap"
 )
 
@@ -22,5 +21,4 @@ func RegisterEventHandlers(params EventParams, routers RouterParams, logger *zap
 		Person{},
 		router.WrapHandler(params.Handler1.Command),
 	)
-
 }

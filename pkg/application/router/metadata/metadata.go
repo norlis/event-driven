@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"maps"
 	"sync"
 )
 
@@ -25,9 +26,7 @@ func (b *Store) All() map[string]string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	out := make(map[string]string, len(b.data))
-	for k, v := range b.data {
-		out[k] = v
-	}
+	maps.Copy(out, b.data)
 	return out
 }
 

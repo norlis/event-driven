@@ -1,6 +1,8 @@
 package logger
 
 import (
+	"fmt"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -12,7 +14,7 @@ func New(debug bool) (*zap.Logger, error) {
 
 	encoderConfig.EncodeDuration = zapcore.StringDurationEncoder // Cambiamos el formato de la duración.
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder        // Formato de tiempo legible.
-	//encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder // Niveles con colores.
+	// encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder // Niveles con colores.
 	encoderConfig.TimeKey = "timestamp"
 
 	config.EncoderConfig = encoderConfig
@@ -23,5 +25,9 @@ func New(debug bool) (*zap.Logger, error) {
 		config.DisableStacktrace = false
 	}
 
-	return config.Build()
+	l, err := config.Build()
+	if err != nil {
+		return nil, fmt.Errorf("zap logger build: %w", err)
+	}
+	return l, nil
 }

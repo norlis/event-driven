@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// dummy ack / nack
+// dummy ack / nack.
 var dummy = func() {
 	// ack / nack
 }
@@ -36,7 +36,7 @@ func NewMessageWithoutAck(uuid string, payload []byte, attrs map[string]string) 
 }
 
 func NewMessage(uuid string, payload []byte, attrs map[string]string, ackFn, nackFn func()) *Message {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in Message and called in Ack/Nack
 	return &Message{
 		UUID:     uuid,
 		Payload:  payload,
@@ -65,7 +65,7 @@ func (m *Message) Context() context.Context {
 	return m.ctx
 }
 
-// Ack indica que el mensaje fue procesado exitosamente
+// Ack indica que el mensaje fue procesado exitosamente.
 func (m *Message) Ack() {
 	m.once.Do(func() {
 		if m.ack != nil {
@@ -75,7 +75,7 @@ func (m *Message) Ack() {
 	})
 }
 
-// Nack indica que el procesamiento del mensaje falló
+// Nack indica que el procesamiento del mensaje falló.
 func (m *Message) Nack() {
 	m.once.Do(func() {
 		if m.nack != nil {

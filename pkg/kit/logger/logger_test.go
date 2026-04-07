@@ -10,6 +10,7 @@ func TestNew(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Debug_true", func(t *testing.T) {
+		t.Parallel()
 		l, err := New(true)
 		if err != nil {
 			t.Fatalf("New(true) retornó error: %v", err)
@@ -24,6 +25,7 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("Debug_false", func(t *testing.T) {
+		t.Parallel()
 		l, err := New(false)
 		if err != nil {
 			t.Fatalf("New(false) retornó error: %v", err)

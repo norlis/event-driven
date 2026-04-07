@@ -71,6 +71,7 @@ func TestMessage_AckOrNackOnlyOnce(t *testing.T) {
 	nackFunc := func() { nackCount++ }
 
 	t.Run("Ack_then_Nack", func(t *testing.T) {
+		t.Parallel()
 		ackCount, nackCount = 0, 0 // Reset contadores
 		msg := NewMessage("uuid1", nil, nil, ackFunc, nackFunc)
 		msg.Ack()
@@ -88,6 +89,7 @@ func TestMessage_AckOrNackOnlyOnce(t *testing.T) {
 	})
 
 	t.Run("Nack_then_Ack", func(t *testing.T) {
+		t.Parallel()
 		ackCount, nackCount = 0, 0 // Reset contadores
 		msg := NewMessage("uuid2", nil, nil, ackFunc, nackFunc)
 		msg.Nack()

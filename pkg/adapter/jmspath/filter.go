@@ -3,9 +3,8 @@ package jmspath
 import (
 	"encoding/json"
 
-	"github.com/norlis/event-driven/pkg/domain/event"
-
 	"github.com/jmespath/go-jmespath"
+	"github.com/norlis/event-driven/pkg/domain/event"
 	"go.uber.org/zap"
 )
 

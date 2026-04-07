@@ -41,7 +41,7 @@ func NewDispatcher(cfg DispatcherConfig, logger *zap.Logger) *Dispatcher {
 
 func (d *Dispatcher) Run(ctx context.Context) {
 	// Creamos un contexto que podemos cancelar para detener la supervisión.
-	d.workerCtx, d.workerCancel = context.WithCancel(context.Background())
+	d.workerCtx, d.workerCancel = context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in d.workerCancel and called in Stop()
 
 	d.logger.Info("Dispatcher starting initial workers...", zap.Int("numWorkers", d.maxWorkers))
 	for i := 1; i <= d.maxWorkers; i++ {

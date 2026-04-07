@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/norlis/event-driven/pkg/domain/event"
-
 	"cloud.google.com/go/pubsub/v2"
+	"github.com/norlis/event-driven/pkg/domain/event"
 	"go.uber.org/zap"
 )
 
@@ -22,8 +21,8 @@ type SubscriberConfig struct {
 }
 
 type GCPSubscription struct {
-	//mu       sync.RWMutex
-	//lastPull time.Time
+	// mu       sync.RWMutex
+	// lastPull time.Time
 	client *pubsub.Client
 	cfg    SubscriberConfig
 	logger *zap.Logger

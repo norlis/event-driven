@@ -8,7 +8,6 @@ import (
 	"github.com/norlis/event-driven/pkg/application/router/metadata"
 	"github.com/norlis/event-driven/pkg/domain/event"
 	"github.com/norlis/event-driven/pkg/port"
-
 	"go.uber.org/zap"
 )
 
@@ -58,7 +57,6 @@ func (w *Worker) processJob(job Job) {
 	handlerCtx := metadata.NewContext(job.Msg.Context(), store)
 
 	data, err := job.Handler(handlerCtx, job.Msg)
-
 	if err != nil {
 		w.logger.Error("Handler execution failed",
 			zap.Error(err),

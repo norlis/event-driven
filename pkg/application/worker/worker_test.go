@@ -9,11 +9,10 @@ import (
 	"time"
 
 	"github.com/norlis/event-driven/pkg/domain/event"
-
 	"go.uber.org/zap/zaptest"
 )
 
-// Mock para domain.Publisher usado en el worker
+// Mock para domain.Publisher usado en el worker.
 type mockWorkerPublisher struct {
 	PublishFunc func(msg *event.Message) error
 	Called      bool

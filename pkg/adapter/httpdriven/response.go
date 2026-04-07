@@ -13,7 +13,7 @@ type Response struct {
 
 	RequestId string `json:"requestId"`
 	Timestamp int64  `json:"timestamp"`
-	Instance  string `json:"instance"` //a URI that identifies the specific occurrence of the error
+	Instance  string `json:"instance"` // a URI that identifies the specific occurrence of the error
 
 	Code   string `json:"error,omitempty"`  // a unique identifier for the error
 	Detail string `json:"detail,omitempty"` // a human-readable explanation of the error
@@ -21,14 +21,15 @@ type Response struct {
 }
 
 func (res *Response) Json(w http.ResponseWriter, r *http.Request) {
-
 	if res.Status == 0 {
 		res.Status = http.StatusAccepted
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(res.Status)
-	_ = json.NewEncoder(w).Encode(res)
+	if err := json.NewEncoder(w).Encode(res); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 type ResponseBuilder struct {

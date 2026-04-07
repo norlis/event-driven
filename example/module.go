@@ -8,16 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/norlis/event-driven/pkg/kit/logger"
-
-	"github.com/norlis/event-driven/pkg/port"
-
 	"cloud.google.com/go/pubsub/v2"
 	"github.com/norlis/event-driven/pkg/adapter/httpdriven"
 	messaging "github.com/norlis/event-driven/pkg/adapter/pubsub"
 	"github.com/norlis/event-driven/pkg/application/router"
 	"github.com/norlis/event-driven/pkg/application/router/middlewares"
 	"github.com/norlis/event-driven/pkg/application/worker"
+	applogger "github.com/norlis/event-driven/pkg/kit/logger"
+	"github.com/norlis/event-driven/pkg/port"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -49,14 +47,14 @@ type EventParams struct {
 func NewLogger(cfg *Configuration) (*zap.Logger, error) {
 	debugMode := strings.EqualFold(cfg.LogLevel, "debug")
 
-	l, err := logger.New(debugMode)
+	l, err := applogger.New(debugMode)
 	if err != nil {
 		return nil, fmt.Errorf("fallo al crear logger: %w", err)
 	}
 	return l, nil
 }
 
-//func NewOpenTelemetry(lc fx.Lifecycle, envCfg *AppEnvConfig, logger *zap.Logger) (trace.Tracer, error) {
+// func NewOpenTelemetry(lc fx.Lifecycle, envCfg *AppEnvConfig, logger *zap.Logger) (trace.Tracer, error) {
 //	if !envCfg.OtelEnabled {
 //		logger.Info("OpenTelemetry Tracing está DESHABILITADO por configuración.")
 //		return trace.NewNoopTracerProvider().Tracer("noop-tracer"), nil
@@ -124,7 +122,7 @@ func NewAppSubscription(psClient *pubsub.Client, configuration *Configuration, l
 func NewEventPublisher(psClient *pubsub.Client, configuration *Configuration, logger *zap.Logger) (port.Publisher, error) {
 	if configuration.Messaging.PublishDestinationTopic == "" {
 		logger.Info("No se configuró PublishTraceTopic, no se creará el publicador de resultados.")
-		return nil, nil
+		return nil, nil //nolint:nilnil // fx expects nil publisher when topic is not configured
 	}
 	publisherCfg := messaging.PublisherConfig{
 		ProjectID: configuration.Cloud.GCloudProjectId,
@@ -133,7 +131,7 @@ func NewEventPublisher(psClient *pubsub.Client, configuration *Configuration, lo
 	return messaging.NewPublisher(psClient, publisherCfg, logger.Named("publisher")), nil
 }
 
-// NewWorkerDispatcher Provider para el Dispatcher de Workers
+// NewWorkerDispatcher Provider para el Dispatcher de Workers.
 func NewWorkerDispatcher(lc fx.Lifecycle, logger *zap.Logger) *worker.Dispatcher {
 	dispatcherCfg := worker.DispatcherConfig{
 		NumWorkers: 10, // TODO: Estos valores deberían venir de configuration
@@ -143,7 +141,7 @@ func NewWorkerDispatcher(lc fx.Lifecycle, logger *zap.Logger) *worker.Dispatcher
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			go d.Run(context.Background())
+			go d.Run(context.Background()) //nolint:gosec // dispatcher needs independent context from fx lifecycle
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
@@ -175,7 +173,7 @@ func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams,
 			logger.Info("stating http Event Router...")
 
 			var childCtx context.Context
-			childCtx, cancel = context.WithCancel(context.Background())
+			childCtx, cancel = context.WithCancel(context.Background()) //nolint:gosec // cancel is called in OnStop hook
 
 			go func() {
 				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
@@ -194,10 +192,9 @@ func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams,
 	})
 
 	return r
-
 }
 
-// NewPrincipalRouter Provider para el Router
+// NewPrincipalRouter Provider para el Router.
 func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.Router {
 	routerCfg := router.Config{
 		Subscription:     subs.AppSubscription,
@@ -206,7 +203,7 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 	}
 	r := router.New(routerCfg)
 
-	//r.Use(
+	// r.Use(
 	//	middlewares.NewIgnoreErrors(
 	//		logger, ErrInvalidObject, ErrDataNotFound,)
 	//	.Middleware,
@@ -228,7 +225,7 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 			logger.Info("Iniciando Event Router...")
 
 			var childCtx context.Context
-			childCtx, cancel = context.WithCancel(context.Background())
+			childCtx, cancel = context.WithCancel(context.Background()) //nolint:gosec // cancel is called in OnStop hook
 
 			go func() {
 				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
@@ -249,7 +246,7 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 }
 
 // NewTraceRouter Provider para el Router
-//func NewTraceRouter(params EventParams, subs SubscriptionParams) *router.Router {
+// func NewTraceRouter(params EventParams, subs SubscriptionParams) *router.Router {
 //	routerCfg := router.Config{
 //		Subscription:     subs.TraceSubscription,
 //		WorkerDispatcher: params.Dispatcher,
@@ -284,7 +281,7 @@ func NewHttpServerMux(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
 
 			if err := server.Shutdown(shutdownCtx); err != nil {
 				logger.Error("Error durante el apagado del servidor HTTP: %v", zap.Error(err))
-				return err
+				return fmt.Errorf("http server shutdown: %w", err)
 			}
 			logger.Info("Servidor HTTP detenido correctamente.")
 			return nil
@@ -295,10 +292,14 @@ func NewHttpServerMux(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
 }
 
 func NewHttpSubscriber(server *http.ServeMux, logger *zap.Logger) (port.Subscription, error) {
-	return httpdriven.NewSubscriber(
+	sub, err := httpdriven.NewSubscriber(
 		server,
 		httpdriven.SubscriberConfig{
 			Pattern: "POST /command",
 			Logger:  logger.Named("http-subscriber"),
 		})
+	if err != nil {
+		return nil, fmt.Errorf("http subscriber: %w", err)
+	}
+	return sub, nil
 }

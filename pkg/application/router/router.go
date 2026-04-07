@@ -3,13 +3,13 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
-
-	"github.com/norlis/event-driven/pkg/domain/event"
-	"github.com/norlis/event-driven/pkg/port"
 
 	"github.com/norlis/event-driven/pkg/application/worker"
 	"github.com/norlis/event-driven/pkg/domain"
+	"github.com/norlis/event-driven/pkg/domain/event"
+	"github.com/norlis/event-driven/pkg/port"
 	"go.uber.org/zap"
 )
 
@@ -73,7 +73,7 @@ func (r *Router) Register(pub port.Publisher, filter port.Filter, objectType any
 func (r *Router) Run(ctx context.Context) error {
 	r.cfg.Logger.Info("Router iniciando, comenzando suscripción...")
 
-	return r.cfg.Subscription.Start(ctx, func(msg *event.Message) {
+	if err := r.cfg.Subscription.Start(ctx, func(msg *event.Message) {
 		r.cfg.Logger.Debug("Router recibió mensaje de la suscripción", zap.String("messageUUID", msg.UUID))
 
 		matchingRoute := r.findMatchingRoute(msg)
@@ -84,7 +84,10 @@ func (r *Router) Run(ctx context.Context) error {
 
 		r.cfg.Logger.Debug("Mensaje coincide con filtro, procesando ruta...", zap.String("messageUUID", msg.UUID))
 		r.processAndDispatchJob(ctx, msg, matchingRoute)
-	})
+	}); err != nil {
+		return fmt.Errorf("subscription start: %w", err)
+	}
+	return nil
 }
 
 // findMatchingRoute encuentra la primera ruta que coincide con el filtro del mensaje.

@@ -6,11 +6,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/norlis/event-driven/pkg/domain/event"
 	"github.com/norlis/event-driven/pkg/port"
 	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
-
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -28,7 +27,6 @@ type HttpSubscriber struct {
 }
 
 func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (port.Subscription, error) {
-
 	return &HttpSubscriber{
 		server:         server,
 		config:         cfg,
@@ -39,7 +37,7 @@ func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (port.Subscripti
 
 func (h *HttpSubscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		//reqCtx := r.Context()
+		// reqCtx := r.Context()
 		body, err := io.ReadAll(r.Body)
 
 		messageUUID := r.Header.Get("X-Message-UUID")
@@ -70,7 +68,7 @@ func (h *HttpSubscriber) Handler(handler func(msg *event.Message)) http.HandlerF
 		)
 
 		msg := event.NewMessageWithoutAck(messageUUID, body, map[string]string{})
-		//msg := domain.NewMessageWithoutAck(messageUUID, body, headersAsMetadata)
+		// msg := domain.NewMessageWithoutAck(messageUUID, body, headersAsMetadata)
 		preflightResultChan := make(chan error, 1)
 		msg.SetPreflightCallback(func(err error) {
 			preflightResultChan <- err
@@ -99,9 +97,9 @@ func (h *HttpSubscriber) Handler(handler func(msg *event.Message)) http.HandlerF
 			WithId(messageUUID, uuid.New().String(), uuid.New().String()).
 			Build().Json(w, r)
 
-		//processingErr := msg.ReportedError()
+		// processingErr := msg.ReportedError()
 
-		//if errors.Is(processingErr, domain.ErrNoRouteMatched) {
+		// if errors.Is(processingErr, domain.ErrNoRouteMatched) {
 		//	h.logger.Warn("Request rejected, no matching route found for command",
 		//		zap.String("uuid", messageUUID),
 		//		zap.String("path", h.config.Pattern),
@@ -116,7 +114,7 @@ func (h *HttpSubscriber) Handler(handler func(msg *event.Message)) http.HandlerF
 		//	return
 		//}
 		//
-		//NewResponseBuilder().
+		// NewResponseBuilder().
 		//	WithId(messageUUID, uuid.New().String(), uuid.New().String()).
 		//	WithInstance(r.Pattern).
 		//	Build().
@@ -126,8 +124,8 @@ func (h *HttpSubscriber) Handler(handler func(msg *event.Message)) http.HandlerF
 
 func (h *HttpSubscriber) Start(ctx context.Context, handler func(msg *event.Message)) error {
 	h.config.Logger.Info("HttpSubscriber Start")
-	//fn := h.Handler(handler)
-	//if h.config.Middleware != nil {
+	// fn := h.Handler(handler)
+	// if h.config.Middleware != nil {
 	//	fn = h.config.Middleware(fn)
 	//}
 	h.server.HandleFunc(h.config.Pattern, h.Handler(handler))

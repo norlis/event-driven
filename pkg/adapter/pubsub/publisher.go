@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/norlis/event-driven/pkg/domain/event"
-
 	"cloud.google.com/go/pubsub/v2"
+	"github.com/norlis/event-driven/pkg/domain/event"
 	"go.uber.org/zap"
 )
 
