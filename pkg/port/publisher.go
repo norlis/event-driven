@@ -1,7 +1,7 @@
 package port
 
-import "github.com/norlis/event-driven/pkg/domain/event"
+import cloudevents "github.com/cloudevents/sdk-go/v2/event"
 
 type Publisher interface {
-	Publish(*event.Message) error
+	Publish(cloudevents.Event) error
 }

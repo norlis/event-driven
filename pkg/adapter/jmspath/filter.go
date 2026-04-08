@@ -22,24 +22,31 @@ func New(expr string, logger *zap.Logger) *JMESFilter {
 
 func (f *JMESFilter) Match(msg *event.Message) bool {
 	var data map[string]any
-	if err := json.Unmarshal(msg.Payload, &data); err != nil {
-		f.logger.Error(
-			"JMESFilter: Fallo al decodificar JSON para filtro",
+	if err := json.Unmarshal(msg.Data(), &data); err != nil {
+		f.logger.Error("JMESFilter: failed to decode JSON",
 			zap.Error(err),
-			zap.String("messageUUID", msg.UUID),
+			zap.String("id", msg.ID()),
 		)
 		return false
 	}
 
 	res, err := jmespath.Search(f.expr, data)
 	if err != nil {
-		f.logger.Error("JMESFilter: Error al evaluar expresión JMESPath", zap.Error(err), zap.String("expression", f.expr), zap.String("messageUUID", msg.UUID))
+		f.logger.Error("JMESFilter: expression evaluation error",
+			zap.Error(err),
+			zap.String("expression", f.expr),
+			zap.String("id", msg.ID()),
+		)
 		return false
 	}
 
 	match, ok := res.(bool)
 	if !ok {
-		f.logger.Warn("JMESFilter: Resultado de la expresión no es booleano", zap.Any("result", res), zap.String("expression", f.expr), zap.String("messageUUID", msg.UUID))
+		f.logger.Warn("JMESFilter: expression result is not boolean",
+			zap.Any("result", res),
+			zap.String("expression", f.expr),
+			zap.String("id", msg.ID()),
+		)
 		return false
 	}
 	return match

@@ -13,7 +13,6 @@ import (
 	messaging "github.com/norlis/event-driven/pkg/adapter/pubsub"
 	"github.com/norlis/event-driven/pkg/application/router"
 	"github.com/norlis/event-driven/pkg/application/router/middlewares"
-	"github.com/norlis/event-driven/pkg/application/worker"
 	applogger "github.com/norlis/event-driven/pkg/kit/logger"
 	"github.com/norlis/event-driven/pkg/port"
 	"go.uber.org/fx"
@@ -30,8 +29,8 @@ type SubscriptionParams struct {
 type RouterParams struct {
 	fx.In
 
-	HttpRouter      *router.Router `name:"HttpRouter"`
-	PrincipalRouter *router.Router `name:"PrincipalRouter"`
+	HttpMux      *router.EventMux `name:"HttpMux"`
+	PrincipalMux *router.EventMux `name:"PrincipalMux"`
 }
 
 type EventParams struct {
@@ -39,7 +38,6 @@ type EventParams struct {
 
 	Configuration *Configuration
 	Log           *zap.Logger
-	Dispatcher    *worker.Dispatcher
 	Logger        *zap.Logger
 	Handler1      UseCaseExample
 }
@@ -53,38 +51,6 @@ func NewLogger(cfg *Configuration) (*zap.Logger, error) {
 	}
 	return l, nil
 }
-
-// func NewOpenTelemetry(lc fx.Lifecycle, envCfg *AppEnvConfig, logger *zap.Logger) (trace.Tracer, error) {
-//	if !envCfg.OtelEnabled {
-//		logger.Info("OpenTelemetry Tracing está DESHABILITADO por configuración.")
-//		return trace.NewNoopTracerProvider().Tracer("noop-tracer"), nil
-//	}
-//
-//	// Usando el otelsetup de tu librería
-//	otelShutdown, err := otelsetup.InitTracerProvider(
-//		context.Background(), // FX maneja el contexto de apagado a través de lc.Append
-//		"otra-app-fx-service",
-//		"1.0.0",
-//		envCfg.OtelEndpoint,
-//		envCfg.OtelEnabled, // true en este bloque
-//		logger.Named("otelsetup"),
-//	)
-//	if err != nil {
-//		// InitTracerProvider ahora puede devolver un Noop si falla la conexión,
-//		// así que solo logueamos y continuamos con un NoopTracer.
-//		logger.Warn("Fallo al inicializar el proveedor de trazas OTel completamente, se usará NoopTracerProvider.", zap.Error(err))
-//		return trace.NewNoopTracerProvider().Tracer("otel-init-failed-tracer"), nil
-//	}
-//
-//	lc.Append(fx.Hook{
-//		OnStop: func(ctx context.Context) error {
-//			logger.Info("Apagando OpenTelemetry Provider...")
-//			return otelShutdown(ctx)
-//		},
-//	})
-//
-//	return otel.Tracer("otra-app-fx/main"), nil // Un tracer para la app
-//}
 
 func NewPubSubClient(lc fx.Lifecycle, configuration *Configuration, logger *zap.Logger) (*pubsub.Client, error) {
 	client, err := pubsub.NewClient(context.Background(), configuration.Cloud.GCloudProjectId)
@@ -112,7 +78,7 @@ func NewAppSubscription(psClient *pubsub.Client, configuration *Configuration, l
 	subscriberCfg := messaging.SubscriberConfig{
 		ProjectID:              configuration.Cloud.GCloudProjectId,
 		SubscriptionID:         configuration.Messaging.SubscribeDestination,
-		MaxOutstandingMessages: 120, // NumWorkers + QueueSize
+		MaxOutstandingMessages: 50,
 		NumGoroutines:          10,
 		MaxExtension:           60 * time.Second,
 	}
@@ -131,59 +97,33 @@ func NewEventPublisher(psClient *pubsub.Client, configuration *Configuration, lo
 	return messaging.NewPublisher(psClient, publisherCfg, logger.Named("publisher")), nil
 }
 
-// NewWorkerDispatcher Provider para el Dispatcher de Workers.
-func NewWorkerDispatcher(lc fx.Lifecycle, logger *zap.Logger) *worker.Dispatcher {
-	dispatcherCfg := worker.DispatcherConfig{
-		NumWorkers: 10, // TODO: Estos valores deberían venir de configuration
-		QueueSize:  100,
-	}
-	d := worker.NewDispatcher(dispatcherCfg, logger.Named("worker-dispatcher"))
-
-	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			go d.Run(context.Background()) //nolint:gosec // dispatcher needs independent context from fx lifecycle
-			return nil
-		},
-		OnStop: func(ctx context.Context) error {
-			logger.Info("Deteniendo Worker Dispatcher...")
-			d.Stop()
-			if ctx.Err() != nil { // Verifica si el contexto del hook Fx ya expiró
-				logger.Warn(">>> HOOK: NewWorkerDispatcher OnStop - Contexto del hook Fx (stopCtx) expiró.", zap.Error(ctx.Err()))
-			}
-			return nil
-		},
+func NewHttpMux(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.EventMux {
+	mux := router.NewEventMux(router.Config{
+		Subscription:    subs.HttpSubscription,
+		Logger:          logger.Named("http-mux"),
+		ReportOnNoMatch: true,
 	})
-	return d
-}
-
-func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.Router {
-	r := router.New(router.Config{
-		Subscription:     subs.HttpSubscription,
-		WorkerDispatcher: params.Dispatcher,
-		Logger:           params.Logger.Named("http-router"),
-		ReportOnNoMatch:  true,
-	})
-	r.Use(middlewares.Recoverer)
-	r.UsePreflight(middlewares.ValidationMiddleware(logger))
+	mux.Use(middlewares.Recoverer)
+	mux.UsePreflight(middlewares.ValidationMiddleware(logger))
 
 	var cancel context.CancelFunc
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			logger.Info("stating http Event Router...")
+			logger.Info("Starting HTTP EventMux...")
 
 			var childCtx context.Context
 			childCtx, cancel = context.WithCancel(context.Background()) //nolint:gosec // cancel is called in OnStop hook
 
 			go func() {
-				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("Error crítico en http Event Router", zap.Error(err))
+				if err := mux.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("Error crítico en HTTP EventMux", zap.Error(err))
 				}
 			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			logger.Info("Router shutdown manejado por cancelación externa.")
+			logger.Info("EventMux shutdown manejado por cancelación externa.")
 			if cancel != nil {
 				cancel()
 			}
@@ -191,25 +131,17 @@ func NewHttpRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams,
 		},
 	})
 
-	return r
+	return mux
 }
 
-// NewPrincipalRouter Provider para el Router.
-func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.Router {
-	routerCfg := router.Config{
-		Subscription:     subs.AppSubscription,
-		WorkerDispatcher: params.Dispatcher,
-		Logger:           params.Logger.Named("pubsub-router-principal"),
-	}
-	r := router.New(routerCfg)
+// NewPrincipalMux Provider para el EventMux principal.
+func NewPrincipalMux(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.EventMux {
+	mux := router.NewEventMux(router.Config{
+		Subscription: subs.AppSubscription,
+		Logger:       logger.Named("pubsub-mux-principal"),
+	})
 
-	// r.Use(
-	//	middlewares.NewIgnoreErrors(
-	//		logger, ErrInvalidObject, ErrDataNotFound,)
-	//	.Middleware,
-	//)
-
-	r.Use(
+	mux.Use(
 		middlewares.NewIgnoreErrors(
 			logger,
 			middlewares.IgnoreSpecificError("ErrInvalidObject", ErrInvalidObject),
@@ -222,38 +154,28 @@ func NewPrincipalRouter(lc fx.Lifecycle, params EventParams, subs SubscriptionPa
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			logger.Info("Iniciando Event Router...")
+			logger.Info("Starting EventMux...")
 
 			var childCtx context.Context
 			childCtx, cancel = context.WithCancel(context.Background()) //nolint:gosec // cancel is called in OnStop hook
 
 			go func() {
-				if err := r.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("Error crítico en Event Router", zap.Error(err))
+				if err := mux.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("Error crítico en EventMux", zap.Error(err))
 				}
 			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			logger.Info("Router shutdown manejado por cancelación externa.")
+			logger.Info("EventMux shutdown manejado por cancelación externa.")
 			if cancel != nil {
 				cancel()
 			}
 			return nil
 		},
 	})
-	return r
+	return mux
 }
-
-// NewTraceRouter Provider para el Router
-// func NewTraceRouter(params EventParams, subs SubscriptionParams) *router.Router {
-//	routerCfg := router.Config{
-//		Subscription:     subs.TraceSubscription,
-//		WorkerDispatcher: params.Dispatcher,
-//		Logger:           params.Logger.Named("pubsub-router-trace"),
-//	}
-//	return router.New(routerCfg)
-//}
 
 func NewHttpServerMux(lc fx.Lifecycle, logger *zap.Logger) *http.ServeMux {
 	s := http.NewServeMux()

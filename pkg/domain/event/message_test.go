@@ -2,107 +2,125 @@ package event
 
 import (
 	"testing"
+
+	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 )
+
+func newTestEvent(id string) cloudevents.Event {
+	ce := cloudevents.New()
+	ce.SetID(id)
+	ce.SetType("test.event")
+	ce.SetSource("test://source")
+	return ce
+}
 
 func TestMessage_Ack(t *testing.T) {
 	t.Parallel()
 
 	ackCalled := false
-	ackFunc := func() {
-		ackCalled = true
-	}
-	nackFunc := func() {}
+	msg := NewMessage(newTestEvent("ack-1"), func() { ackCalled = true }, func() {})
 
-	msg := NewMessage("test-uuid", []byte("payload"), nil, ackFunc, nackFunc)
-
-	// Llamar Ack múltiples veces
 	msg.Ack()
-	msg.Ack() // La segunda llamada no debería tener efecto
+	msg.Ack() // second call should have no effect
 
 	if !ackCalled {
-		t.Error("ackFunc no fue llamada después de msg.Ack()")
+		t.Error("ackFunc was not called after msg.Ack()")
 	}
 
 	select {
 	case <-msg.Context().Done():
-		// El contexto del mensaje debería estar cancelado
 	default:
-		t.Error("El contexto del mensaje no fue cancelado después de Ack()")
+		t.Error("message context was not cancelled after Ack()")
 	}
-
-	// Verificar que la función Ack original solo se llamó una vez (implícito por sync.Once)
-	// Para probar esto explícitamente, necesitaríamos un contador en ackFunc.
-	// Por ahora, confiamos en la semántica de sync.Once.
 }
 
 func TestMessage_Nack(t *testing.T) {
 	t.Parallel()
 
 	nackCalled := false
-	ackFunc := func() {}
-	nackFunc := func() {
-		nackCalled = true
-	}
-
-	msg := NewMessage("test-uuid", []byte("payload"), nil, ackFunc, nackFunc)
+	msg := NewMessage(newTestEvent("nack-1"), func() {}, func() { nackCalled = true })
 
 	msg.Nack()
-	msg.Nack() // Segunda llamada sin efecto
+	msg.Nack()
 
 	if !nackCalled {
-		t.Error("nackFunc no fue llamada después de msg.Nack()")
+		t.Error("nackFunc was not called after msg.Nack()")
 	}
 
 	select {
 	case <-msg.Context().Done():
-		// El contexto del mensaje debería estar cancelado
 	default:
-		t.Error("El contexto del mensaje no fue cancelado después de Nack()")
+		t.Error("message context was not cancelled after Nack()")
 	}
 }
 
 func TestMessage_AckOrNackOnlyOnce(t *testing.T) {
 	t.Parallel()
 
-	ackCount := 0
-	nackCount := 0
-
-	ackFunc := func() { ackCount++ }
-	nackFunc := func() { nackCount++ }
-
 	t.Run("Ack_then_Nack", func(t *testing.T) {
 		t.Parallel()
-		ackCount, nackCount = 0, 0 // Reset contadores
-		msg := NewMessage("uuid1", nil, nil, ackFunc, nackFunc)
+		ackCount, nackCount := 0, 0
+		msg := NewMessage(newTestEvent("once-1"),
+			func() { ackCount++ },
+			func() { nackCount++ },
+		)
 		msg.Ack()
-		msg.Nack() // No debería llamar a nackFunc ni afectar el contexto otra vez
+		msg.Nack()
 
 		if ackCount != 1 {
-			t.Errorf("ackFunc fue llamada %d veces, se esperaba 1", ackCount)
+			t.Errorf("ackFunc called %d times, expected 1", ackCount)
 		}
 		if nackCount != 0 {
-			t.Errorf("nackFunc fue llamada %d veces, se esperaba 0", nackCount)
+			t.Errorf("nackFunc called %d times, expected 0", nackCount)
 		}
-		if msg.Context().Err() == nil { // El contexto debe estar cancelado por el primer Ack
-			t.Error("El contexto del mensaje no se canceló")
+		if msg.Context().Err() == nil {
+			t.Error("message context was not cancelled")
 		}
 	})
 
 	t.Run("Nack_then_Ack", func(t *testing.T) {
 		t.Parallel()
-		ackCount, nackCount = 0, 0 // Reset contadores
-		msg := NewMessage("uuid2", nil, nil, ackFunc, nackFunc)
+		ackCount, nackCount := 0, 0
+		msg := NewMessage(newTestEvent("once-2"),
+			func() { ackCount++ },
+			func() { nackCount++ },
+		)
 		msg.Nack()
-		msg.Ack() // No debería llamar a ackFunc
+		msg.Ack()
 
 		if nackCount != 1 {
-			t.Errorf("nackFunc fue llamada %d veces, se esperaba 1", nackCount)
+			t.Errorf("nackFunc called %d times, expected 1", nackCount)
 		}
 		if ackCount != 0 {
-			t.Errorf("ackFunc fue llamada %d veces, se esperaba 0", ackCount)
+			t.Errorf("ackFunc called %d times, expected 0", ackCount)
 		}
-		if msg.Context().Err() == nil { // El contexto debe estar cancelado por el primer Nack
-			t.Error("El contexto del mensaje no se canceló")
+		if msg.Context().Err() == nil {
+			t.Error("message context was not cancelled")
 		}
 	})
+}
+
+func TestMessage_CloudEventFields(t *testing.T) {
+	t.Parallel()
+
+	ce := cloudevents.New()
+	ce.SetID("ce-123")
+	ce.SetType("com.example.test")
+	ce.SetSource("//pubsub/project/sub")
+	_ = ce.SetData(cloudevents.ApplicationJSON, []byte(`{"name":"test"}`))
+
+	msg := NewMessageWithoutAck(ce)
+
+	if msg.ID() != "ce-123" {
+		t.Errorf("ID() = %q, want %q", msg.ID(), "ce-123")
+	}
+	if msg.Type() != "com.example.test" {
+		t.Errorf("Type() = %q, want %q", msg.Type(), "com.example.test")
+	}
+	if msg.Source() != "//pubsub/project/sub" {
+		t.Errorf("Source() = %q, want %q", msg.Source(), "//pubsub/project/sub")
+	}
+	if string(msg.Data()) != `{"name":"test"}` {
+		t.Errorf("Data() = %q, want %q", string(msg.Data()), `{"name":"test"}`)
+	}
 }

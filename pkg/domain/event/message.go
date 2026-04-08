@@ -3,23 +3,18 @@ package event
 import (
 	"context"
 	"sync"
+
+	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 )
 
-// dummy ack / nack.
-var dummy = func() {
-	// ack / nack
-}
+var noop = func() {}
 
-// PreflightCallback es una función que el router puede invocar para notificar
-// el resultado de los chequeos iniciales (validación, enrutamiento).
+// PreflightCallback is invoked by the router to notify the result of initial checks (validation, routing).
 type PreflightCallback func(err error)
 
-type Payload []byte
-
+// Message composes a CloudEvent with message-broker delivery mechanics (Ack/Nack).
 type Message struct {
-	UUID     string
-	Metadata map[string]string
-	Payload  []byte
+	cloudevents.Event
 
 	ack    func()
 	nack   func()
@@ -27,34 +22,30 @@ type Message struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// preflightCallback es invocado tan pronto como el router decide el destino del mensaje.
 	preflightCallback PreflightCallback
 }
 
-func NewMessageWithoutAck(uuid string, payload []byte, attrs map[string]string) *Message {
-	return NewMessage(uuid, payload, attrs, dummy, dummy)
+func NewMessageWithoutAck(ce cloudevents.Event) *Message {
+	return NewMessage(ce, noop, noop)
 }
 
-func NewMessage(uuid string, payload []byte, attrs map[string]string, ackFn, nackFn func()) *Message {
+func NewMessage(ce cloudevents.Event, ackFn, nackFn func()) *Message {
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in Message and called in Ack/Nack
 	return &Message{
-		UUID:     uuid,
-		Payload:  payload,
-		Metadata: attrs,
-		ack:      ackFn,
-		nack:     nackFn,
-		ctx:      ctx,
-		cancel:   cancel,
+		Event:  ce,
+		ack:    ackFn,
+		nack:   nackFn,
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
-// SetPreflightCallback permite a un suscriptor (como el de HTTP) registrar un
-// callback para recibir notificación inmediata del resultado del pre-vuelo.
+// SetPreflightCallback registers a callback for immediate preflight result notification.
 func (m *Message) SetPreflightCallback(cb PreflightCallback) {
 	m.preflightCallback = cb
 }
 
-// NotifyPreflightDone es usado por el router para invocar el callback si existe.
+// NotifyPreflightDone invokes the preflight callback if set.
 func (m *Message) NotifyPreflightDone(err error) {
 	if m.preflightCallback != nil {
 		m.preflightCallback(err)
@@ -65,7 +56,7 @@ func (m *Message) Context() context.Context {
 	return m.ctx
 }
 
-// Ack indica que el mensaje fue procesado exitosamente.
+// Ack signals that the message was processed successfully.
 func (m *Message) Ack() {
 	m.once.Do(func() {
 		if m.ack != nil {
@@ -75,7 +66,7 @@ func (m *Message) Ack() {
 	})
 }
 
-// Nack indica que el procesamiento del mensaje falló.
+// Nack signals that message processing failed.
 func (m *Message) Nack() {
 	m.once.Do(func() {
 		if m.nack != nil {

@@ -22,6 +22,12 @@ func (b *Store) Set(key, value string) {
 	b.data[key] = value
 }
 
+func (b *Store) Get(key string) string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.data[key]
+}
+
 func (b *Store) All() map[string]string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

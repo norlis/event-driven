@@ -33,16 +33,19 @@ type handler struct {
 	logger *zap.Logger
 }
 
-func (h *handler) Execute(ctx context.Context, event Person) (json.RawMessage, error) {
+func (h *handler) Execute(ctx context.Context, evt Person) (json.RawMessage, error) {
+	evt.Age += 10
 	if envelope, ok := metadata.FromContext(ctx); ok {
 		envelope.Set("eventName", "test")
 	}
 
-	h.logger.Info("Processing event from sub", zap.Any("event", event))
+	h.logger.Info("Processing event from sub", zap.Any("event", evt))
+
+	return json.Marshal(evt) //nolint:wrapcheck
 
 	// panic("test")
 
-	return []byte(`{"success": true}`), nil
+	// return []byte(`{"success": true}`), nil
 
 	// no publish
 	// return nil, nil
@@ -54,7 +57,7 @@ func (h *handler) Execute(ctx context.Context, event Person) (json.RawMessage, e
 }
 
 func (h *handler) Command(ctx context.Context, evt Person) (json.RawMessage, error) {
-	evt.Age = 10
+	// evt.Age = 10
 	h.logger.Info("Processing event from command", zap.Any("event", evt))
 
 	if envelope, ok := metadata.FromContext(ctx); ok {
@@ -66,5 +69,6 @@ func (h *handler) Command(ctx context.Context, evt Person) (json.RawMessage, err
 	if err != nil {
 		return nil, fmt.Errorf("marshal person: %w", err)
 	}
+
 	return data, nil
 }

@@ -73,8 +73,8 @@ func IgnoreErrorType[T error](name string) ErrorPredicate {
 	return ErrorPredicate{
 		Description: fmt.Sprintf("ErrType: (%s)", name),
 		Matches: func(errToCheck error) bool {
-			var target T
-			return errors.As(errToCheck, &target)
+			_, ok := errors.AsType[T](errToCheck)
+			return ok
 		},
 	}
 }

@@ -63,8 +63,8 @@ func (e *HTTPErrorResponder) Respond(w http.ResponseWriter, r *http.Request, err
 func NewRuleForType[T error](statusCode int, code, logMsg string) ErrorRule {
 	return ErrorRule{
 		Match: func(err error) bool {
-			var target T
-			return errors.As(err, &target)
+			_, ok := errors.AsType[T](err)
+			return ok
 		},
 		StatusCode: statusCode,
 		ErrorCode:  code,

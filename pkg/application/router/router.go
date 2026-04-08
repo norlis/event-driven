@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
+	"time"
 
-	"github.com/norlis/event-driven/pkg/application/worker"
+	cloudevents "github.com/cloudevents/sdk-go/v2/event"
+	"github.com/google/uuid"
+	"github.com/norlis/event-driven/pkg/application/router/metadata"
 	"github.com/norlis/event-driven/pkg/domain"
 	"github.com/norlis/event-driven/pkg/domain/event"
 	"github.com/norlis/event-driven/pkg/port"
@@ -24,75 +28,69 @@ type Route struct {
 	ObjectType any
 }
 
-// Config contiene la configuración para el Router.
+// Config holds the EventMux configuration.
 type Config struct {
-	Subscription     port.Subscription  // Fuente de mensajes
-	WorkerDispatcher *worker.Dispatcher // Dispatcher para procesar trabajos
-	Logger           *zap.Logger
-
-	// ReportOnNoMatch, si es true, marcará un mensaje con el estado
-	// domain.ErrNoRouteMatched si no coincide con ninguna ruta.
-	// Esto es útil para suscriptores síncronos como HTTP que necesitan
-	// devolver un código de error específico. El valor por defecto es false.
+	Subscription    port.Subscription
+	Logger          *zap.Logger
 	ReportOnNoMatch bool
+	MaxRetries      int // 0 = infinite retries (current behavior)
 }
 
-type Router struct {
+type EventMux struct {
 	cfg                  Config
 	routes               []*Route
 	middlewares          []Middleware
-	preflightMiddlewares []Middleware // Middlewares síncronos para validación
+	preflightMiddlewares []Middleware
 }
 
-// New creates a new Router for a given Subscription source (PubSub, HTTP, etc.)
-func New(cfg Config) *Router {
+// NewEventMux creates a new EventMux for a given Subscription source (PubSub, HTTP, etc.).
+func NewEventMux(cfg Config) *EventMux {
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()
 	}
-	if cfg.WorkerDispatcher == nil {
-		cfg.Logger.Fatal("Router.New: WorkerDispatcher no puede ser nil")
-	}
-	// El Dispatcher.Run() ahora es llamado por la aplicación que usa la librería.
-	return &Router{
+	return &EventMux{
 		cfg: cfg,
 	}
 }
 
-// Register añade una nueva ruta al router.
-func (r *Router) Register(pub port.Publisher, filter port.Filter, objectType any, handler HandlerFunc) {
-	r.routes = append(r.routes, &Route{
+// Register adds a new route to the mux.
+func (mux *EventMux) Register(pub port.Publisher, filter port.Filter, objectType any, handler HandlerFunc) {
+	mux.routes = append(mux.routes, &Route{
 		Pub:        pub,
 		Filter:     filter,
 		Handler:    handler,
 		ObjectType: objectType,
 	})
-	r.cfg.Logger.Info("Ruta registrada", zap.Int("totalRoutes", len(r.routes)))
+	mux.cfg.Logger.Info("Route registered", zap.Int("totalRoutes", len(mux.routes)))
 }
 
 // Run starts the Subscription and processes all registered routes.
-func (r *Router) Run(ctx context.Context) error {
-	r.cfg.Logger.Info("Router iniciando, comenzando suscripción...")
+func (mux *EventMux) Run(ctx context.Context) error {
+	mux.cfg.Logger.Info("EventMux starting subscription...")
 
-	if err := r.cfg.Subscription.Start(ctx, func(msg *event.Message) {
-		r.cfg.Logger.Debug("Router recibió mensaje de la suscripción", zap.String("messageUUID", msg.UUID))
+	if err := mux.cfg.Subscription.Start(ctx, func(msg *event.Message) {
+		mux.cfg.Logger.Debug("EventMux received message",
+			zap.String("id", msg.ID()),
+			zap.String("type", msg.Type()),
+			zap.String("source", msg.Source()),
+		)
 
-		matchingRoute := r.findMatchingRoute(msg)
+		matchingRoute := mux.findMatchingRoute(msg)
 		if matchingRoute == nil {
-			r.handleNoRouteFound(msg)
+			mux.handleNoRouteFound(msg)
 			return
 		}
 
-		r.cfg.Logger.Debug("Mensaje coincide con filtro, procesando ruta...", zap.String("messageUUID", msg.UUID))
-		r.processAndDispatchJob(ctx, msg, matchingRoute)
+		mux.cfg.Logger.Debug("Message matched filter, processing route...", zap.String("id", msg.ID()))
+		mux.processAndHandle(msg, matchingRoute)
 	}); err != nil {
 		return fmt.Errorf("subscription start: %w", err)
 	}
 	return nil
 }
 
-// findMatchingRoute encuentra la primera ruta que coincide con el filtro del mensaje.
-func (r *Router) findMatchingRoute(msg *event.Message) *Route {
-	for _, rt := range r.routes {
+func (mux *EventMux) findMatchingRoute(msg *event.Message) *Route {
+	for _, rt := range mux.routes {
 		if rt.Filter == nil || rt.Filter.Match(msg) {
 			return rt
 		}
@@ -100,22 +98,36 @@ func (r *Router) findMatchingRoute(msg *event.Message) *Route {
 	return nil
 }
 
-// handleNoRouteFound maneja los mensajes que no coinciden con ninguna ruta.
-func (r *Router) handleNoRouteFound(msg *event.Message) {
-	r.cfg.Logger.Debug("Mensaje no coincidió con ninguna ruta", zap.String("messageUUID", msg.UUID))
-	if r.cfg.ReportOnNoMatch {
+func (mux *EventMux) handleNoRouteFound(msg *event.Message) {
+	mux.cfg.Logger.Debug("Message did not match any route", zap.String("id", msg.ID()))
+	if mux.cfg.ReportOnNoMatch {
 		msg.NotifyPreflightDone(domain.ErrNoRouteMatched)
 	}
-	msg.Ack() // Ack para evitar que quede en la cola.
+	msg.Ack()
 }
 
-// processAndDispatchJob se encarga de las comprobaciones previas y de despachar el trabajo al worker.
-func (r *Router) processAndDispatchJob(ctx context.Context, msg *event.Message, rt *Route) {
-	eventPayload, err := NewInterface(reflect.TypeOf(rt.ObjectType), msg.Payload)
+func (mux *EventMux) processAndHandle(msg *event.Message, rt *Route) {
+	// Retry count tracking.
+	attempt := 1
+	if v, ok := msg.Extensions()["retrycount"].(int32); ok {
+		attempt = int(v) + 1
+	}
+	msg.SetExtension("retrycount", attempt)
+
+	if mux.cfg.MaxRetries > 0 && attempt > mux.cfg.MaxRetries {
+		mux.cfg.Logger.Warn("Max retries exceeded, discarding message",
+			zap.String("id", msg.ID()),
+			zap.Int("attempts", attempt),
+		)
+		msg.Ack()
+		return
+	}
+
+	eventPayload, err := NewInterface(reflect.TypeOf(rt.ObjectType), msg.Data())
 	if err != nil {
-		r.cfg.Logger.Error("Error al desempaquetar payload para la ruta",
+		mux.cfg.Logger.Error("Failed to unmarshal payload",
 			zap.Error(err),
-			zap.String("messageUUID", msg.UUID),
+			zap.String("id", msg.ID()),
 			zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
 		)
 		msg.NotifyPreflightDone(err)
@@ -123,7 +135,7 @@ func (r *Router) processAndDispatchJob(ctx context.Context, msg *event.Message, 
 		return
 	}
 
-	preflightChain := ChainMiddlewares(noopHandler, r.preflightMiddlewares...)
+	preflightChain := ChainMiddlewares(noopHandler, mux.preflightMiddlewares...)
 	if _, preflightErr := preflightChain(context.Background(), eventPayload); preflightErr != nil {
 		msg.NotifyPreflightDone(preflightErr)
 		msg.Nack()
@@ -132,29 +144,60 @@ func (r *Router) processAndDispatchJob(ctx context.Context, msg *event.Message, 
 
 	msg.NotifyPreflightDone(nil)
 
-	effectiveHandler := ChainMiddlewares(rt.Handler, r.middlewares...)
+	// Execute handler inline — runs in the broker SDK's goroutine.
+	effectiveHandler := ChainMiddlewares(rt.Handler, mux.middlewares...)
+	store := metadata.NewStore()
+	store.Set("retrycount", strconv.Itoa(attempt))
+	handlerCtx := metadata.NewContext(msg.Context(), store)
 
-	job := worker.Job{
-		Msg:       msg,
-		Publisher: rt.Pub,
-		Handler: func(ctx context.Context, processedMsg *event.Message) (json.RawMessage, error) {
-			return effectiveHandler(ctx, eventPayload)
-		},
-	}
-
-	select {
-	case r.cfg.WorkerDispatcher.JobQueue <- job:
-		r.cfg.Logger.Debug("Trabajo enviado al dispatcher", zap.String("messageUUID", msg.UUID))
-	case <-ctx.Done():
-		r.cfg.Logger.Warn("Contexto cancelado, no se pudo enviar trabajo al dispatcher", zap.String("messageUUID", msg.UUID))
+	data, err := effectiveHandler(handlerCtx, eventPayload)
+	if err != nil {
+		mux.cfg.Logger.Error("Handler execution failed",
+			zap.Error(err),
+			zap.String("id", msg.ID()),
+		)
 		msg.Nack()
+		return
+	}
+
+	msg.Ack()
+
+	if rt.Pub != nil && data != nil {
+		mux.publishResult(msg, data, store, rt.Pub)
 	}
 }
 
-func (r *Router) Use(middlewares ...Middleware) {
-	r.middlewares = append(r.middlewares, middlewares...)
+func (mux *EventMux) publishResult(msg *event.Message, data json.RawMessage, store *metadata.Store, pub port.Publisher) {
+	ce := cloudevents.New()
+	ce.SetID(uuid.NewString())
+	ce.SetSource(msg.Source())
+	ce.SetType(msg.Type() + ".result")
+	ce.SetTime(time.Now())
+	_ = ce.SetData(cloudevents.ApplicationJSON, data)
+
+	// Propagate handler metadata as extensions.
+	for k, v := range store.All() {
+		ce.SetExtension(k, v)
+	}
+	// Carry over original extensions not overridden by the handler.
+	for k, v := range msg.Extensions() {
+		if _, exists := store.All()[k]; !exists {
+			ce.SetExtension(k, v)
+		}
+	}
+
+	if err := pub.Publish(ce); err != nil {
+		mux.cfg.Logger.Error("Failed to publish result",
+			zap.Error(err),
+			zap.String("id", msg.ID()),
+		)
+	}
 }
 
-func (r *Router) UsePreflight(middlewares ...Middleware) {
-	r.preflightMiddlewares = append(r.preflightMiddlewares, middlewares...)
+func (mux *EventMux) Use(middlewares ...Middleware) {
+	mux.middlewares = append(mux.middlewares, middlewares...)
+}
+
+func (mux *EventMux) UsePreflight(middlewares ...Middleware) {
+	mux.preflightMiddlewares = append(mux.preflightMiddlewares, middlewares...)
 }

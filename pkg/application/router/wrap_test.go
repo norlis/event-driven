@@ -50,15 +50,15 @@ func TestWrapHandler(t *testing.T) {
 			input:       "not MyData",
 			expectedOut: nil,
 			expectErr:   true,
-			// El mensaje de error exacto depende de cómo se formatea en WrapHandler
-			expectedErrMsg: fmt.Sprintf("handler: expected %T but got %T", MyData{}, "not MyData"),
+			// reflect.TypeFor[T]() prints the full type name
+			expectedErrMsg: fmt.Sprintf("handler: expected router.MyData but got %T", "not MyData"),
 		},
 		{
 			name:           "Nil input, incorrect type",
 			input:          nil,
 			expectedOut:    nil,
 			expectErr:      true,
-			expectedErrMsg: fmt.Sprintf("handler: expected %T but got %T", MyData{}, nil),
+			expectedErrMsg: "handler: expected router.MyData but got <nil>",
 		},
 	}
 

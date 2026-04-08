@@ -1,9 +1,71 @@
-## ## Ccommand 1
+### ─── Scenario 1: HTTP → webhook (direct) ───────────────────────────
+### Binary content mode: Ce-Type matches HTTP-1 → result published to webhook.site
+POST http://localhost:8880/command
+Content-Type: application/json
+Ce-Id: scenario1-bin-001
+Ce-Specversion: 1.0
+Ce-Type: com.example.http.command.webhook
+Ce-Source: //test/http-client
+
+{
+  "name": "direct-to-webhook",
+  "age": 28
+}
+
+### Structured content mode: same scenario, full CloudEvent as JSON body.
+POST http://localhost:8880/command
+Content-Type: application/cloudevents+json
+
+{
+  "specversion": "1.0",
+  "id": "scenario1-struct-001",
+  "type": "com.example.http.command.webhook",
+  "source": "//test/http-client",
+  "datacontenttype": "application/json",
+  "data": {
+    "name": "structured-to-webhook",
+    "age": 30
+  }
+}
+
+### ─── Scenario 2: HTTP → Pub/Sub → read from subscription → webhook ─
+### Binary content mode: Ce-Type matches HTTP-2 → result published to Pub/Sub topic.
+### PrincipalMux reads it as type "com.example.http.command.result" → PS-1 forwards to webhook.
+POST http://localhost:8880/command
+Content-Type: application/json
+Ce-Id: scenario2-bin-001
+Ce-Specversion: 1.0
+Ce-Type: com.example.http.command
+Ce-Source: //test/http-client
+
+{
+  "name": "via-pubsub-to-webhook",
+  "age": 25
+}
+
+### Structured content mode: same two-leg flow via Pub/Sub.
+POST http://localhost:8880/command
+Content-Type: application/cloudevents+json
+
+{
+  "specversion": "1.0",
+  "id": "scenario2-struct-001",
+  "type": "com.example.http.command",
+  "source": "//test/http-client",
+  "datacontenttype": "application/json",
+  "data": {
+    "name": "structured-via-pubsub",
+    "age": 22
+  }
+}
+
+### ─── Fallback: Plain HTTP (no CE headers) ──────────────────────────
+### No CloudEvents headers → subscriber builds CE with fallback type "com.example.http.command".
+### Matches HTTP-3 by JMESPath → result published to Pub/Sub topic.
 POST http://localhost:8880/command
 Content-Type: application/json
 
 {
-  "name": "test",
-  "age": 1
+  "name": "webhook",
+  "age": 21
 }
-

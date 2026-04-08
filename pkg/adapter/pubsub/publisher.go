@@ -3,9 +3,10 @@ package pubsub
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"cloud.google.com/go/pubsub/v2"
-	"github.com/norlis/event-driven/pkg/domain/event"
+	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	"go.uber.org/zap"
 )
 
@@ -23,31 +24,49 @@ type GCPPublisher struct {
 func NewPublisher(client *pubsub.Client, cfg PublisherConfig, logger *zap.Logger) *GCPPublisher {
 	return &GCPPublisher{
 		client:  client,
-		topicID: cfg.TopicID, // Usar topicID de la config
+		topicID: cfg.TopicID,
 		logger:  logger,
 	}
 }
 
-func (p *GCPPublisher) Publish(msg *event.Message) error {
-	ctx := context.Background() // TODO: Considerar pasar contexto si es necesario para timeouts
+func (p *GCPPublisher) Publish(ce cloudevents.Event) error {
+	ctx := context.Background()
 	publisher := p.client.Publisher(p.topicID)
-	defer publisher.Stop() // Importante para limpiar recursos del publicador del topic
+	defer publisher.Stop()
+
+	attrs := make(map[string]string)
+	attrs["ce-id"] = ce.ID()
+	attrs["ce-source"] = ce.Source()
+	attrs["ce-type"] = ce.Type()
+	attrs["ce-specversion"] = ce.SpecVersion()
+	if !ce.Time().IsZero() {
+		attrs["ce-time"] = ce.Time().Format(time.RFC3339)
+	}
+	if ce.Subject() != "" {
+		attrs["ce-subject"] = ce.Subject()
+	}
+	for k, v := range ce.Extensions() {
+		if s, ok := v.(string); ok {
+			attrs[k] = s
+		}
+	}
 
 	result := publisher.Publish(ctx, &pubsub.Message{
-		Data:       msg.Payload,
-		Attributes: msg.Metadata,
+		Data:       ce.Data(),
+		Attributes: attrs,
 	})
 
-	// Bloquear hasta que el mensaje sea publicado o falle.
-	// Para alto rendimiento, esto podría hacerse de forma no bloqueante.
 	id, err := result.Get(ctx)
 	if err != nil {
-		p.logger.Error("Fallo al publicar mensaje en Pub/Sub",
+		p.logger.Error("Failed to publish message to Pub/Sub",
 			zap.Error(err),
 			zap.String("topicID", p.topicID),
-			zap.String("originalMessageUUID", msg.UUID))
-		return fmt.Errorf("Pub/Sub Publish.Get: %w", err)
+			zap.String("originalID", ce.ID()))
+		return fmt.Errorf("pubsub publish: %w", err)
 	}
-	p.logger.Debug("Mensaje publicado en Pub/Sub", zap.String("topicID", p.topicID), zap.String("publishedMessageID", id), zap.String("originalMessageUUID", msg.UUID))
+	p.logger.Debug("Message published to Pub/Sub",
+		zap.String("topicID", p.topicID),
+		zap.String("publishedID", id),
+		zap.String("originalID", ce.ID()))
 	return nil
 }
