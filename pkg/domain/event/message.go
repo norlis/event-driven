@@ -7,7 +7,9 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 )
 
-var noop = func() {}
+var noop = func() {
+	// use for without ack
+}
 
 // PreflightCallback is invoked by the router to notify the result of initial checks (validation, routing).
 type PreflightCallback func(err error)

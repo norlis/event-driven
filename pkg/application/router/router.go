@@ -3,9 +3,9 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
@@ -33,7 +33,6 @@ type Config struct {
 	Subscription    port.Subscription
 	Logger          *zap.Logger
 	ReportOnNoMatch bool
-	MaxRetries      int // 0 = infinite retries (current behavior)
 }
 
 type EventMux struct {
@@ -107,22 +106,6 @@ func (mux *EventMux) handleNoRouteFound(msg *event.Message) {
 }
 
 func (mux *EventMux) processAndHandle(msg *event.Message, rt *Route) {
-	// Retry count tracking.
-	attempt := 1
-	if v, ok := msg.Extensions()["retrycount"].(int32); ok {
-		attempt = int(v) + 1
-	}
-	msg.SetExtension("retrycount", attempt)
-
-	if mux.cfg.MaxRetries > 0 && attempt > mux.cfg.MaxRetries {
-		mux.cfg.Logger.Warn("Max retries exceeded, discarding message",
-			zap.String("id", msg.ID()),
-			zap.Int("attempts", attempt),
-		)
-		msg.Ack()
-		return
-	}
-
 	eventPayload, err := NewInterface(reflect.TypeOf(rt.ObjectType), msg.Data())
 	if err != nil {
 		mux.cfg.Logger.Error("Failed to unmarshal payload",
@@ -147,7 +130,6 @@ func (mux *EventMux) processAndHandle(msg *event.Message, rt *Route) {
 	// Execute handler inline — runs in the broker SDK's goroutine.
 	effectiveHandler := ChainMiddlewares(rt.Handler, mux.middlewares...)
 	store := metadata.NewStore()
-	store.Set("retrycount", strconv.Itoa(attempt))
 	handlerCtx := metadata.NewContext(msg.Context(), store)
 
 	data, err := effectiveHandler(handlerCtx, eventPayload)
@@ -156,7 +138,18 @@ func (mux *EventMux) processAndHandle(msg *event.Message, rt *Route) {
 			zap.Error(err),
 			zap.String("id", msg.ID()),
 		)
-		msg.Nack()
+
+		// NonRetryableError → Ack (discard). Retrying won't fix it (e.g. validation, bad payload).
+		// Retryable error → Nack. The broker will redeliver with its own backoff/DLQ policy.
+		if _, ok := errors.AsType[*domain.NonRetryableError](err); ok {
+			mux.cfg.Logger.Warn("Non-retryable error, discarding message",
+				zap.Error(err),
+				zap.String("id", msg.ID()),
+			)
+			msg.Ack()
+		} else {
+			msg.Nack()
+		}
 		return
 	}
 
