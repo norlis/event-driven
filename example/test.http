@@ -4,7 +4,7 @@ POST http://localhost:8880/command
 Content-Type: application/json
 Ce-Id: scenario1-bin-001
 Ce-Specversion: 1.0
-Ce-Type: com.example.http.command.webhook
+Ce-Type: http.command.webhook
 Ce-Source: //test/http-client
 
 {
@@ -19,7 +19,7 @@ Content-Type: application/cloudevents+json
 {
   "specversion": "1.0",
   "id": "scenario1-struct-001",
-  "type": "com.example.http.command.webhook",
+  "type": "http.command.webhook",
   "source": "//test/http-client",
   "datacontenttype": "application/json",
   "data": {
@@ -30,12 +30,12 @@ Content-Type: application/cloudevents+json
 
 ### ─── Scenario 2: HTTP → Pub/Sub → read from subscription → webhook ─
 ### Binary content mode: Ce-Type matches HTTP-2 → result published to Pub/Sub topic.
-### PrincipalMux reads it as type "com.example.http.command.result" → PS-1 forwards to webhook.
+### PrincipalMux reads it as type "http.command.result" → PS-1 forwards to webhook.
 POST http://localhost:8880/command
 Content-Type: application/json
 Ce-Id: scenario2-bin-001
 Ce-Specversion: 1.0
-Ce-Type: com.example.http.command
+Ce-Type: http.command
 Ce-Source: //test/http-client
 
 {
@@ -50,7 +50,7 @@ Content-Type: application/cloudevents+json
 {
   "specversion": "1.0",
   "id": "scenario2-struct-001",
-  "type": "com.example.http.command",
+  "type": "http.command",
   "source": "//test/http-client",
   "datacontenttype": "application/json",
   "data": {
@@ -60,8 +60,8 @@ Content-Type: application/cloudevents+json
 }
 
 ### ─── Fallback: Plain HTTP (no CE headers) ──────────────────────────
-### No CloudEvents headers → subscriber builds CE with fallback type "com.example.http.command".
-### Matches HTTP-3 by JMESPath → result published to Pub/Sub topic.
+### No CloudEvents headers → subscriber builds CE with default type.
+### Matches HTTP-3 by JMESPath (name == "webhook") → result published to Pub/Sub topic.
 POST http://localhost:8880/command
 Content-Type: application/json
 

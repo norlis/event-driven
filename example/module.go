@@ -13,6 +13,7 @@ import (
 	messaging "github.com/norlis/event-driven/pkg/adapter/pubsub"
 	"github.com/norlis/event-driven/pkg/application/router"
 	"github.com/norlis/event-driven/pkg/application/router/middlewares"
+	"github.com/norlis/event-driven/pkg/kit/fxeventmux"
 	applogger "github.com/norlis/event-driven/pkg/kit/logger"
 	"github.com/norlis/event-driven/pkg/port"
 	"go.uber.org/fx"
@@ -97,8 +98,9 @@ func NewEventPublisher(psClient *pubsub.Client, configuration *Configuration, lo
 	return messaging.NewPublisher(psClient, publisherCfg, logger.Named("publisher")), nil
 }
 
-func NewHttpMux(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.EventMux {
+func NewHttpMux(lc fx.Lifecycle, subs SubscriptionParams, logger *zap.Logger, sd fx.Shutdowner) *router.EventMux {
 	mux := router.NewEventMux(router.Config{
+		Name:            "http-mux",
 		Subscription:    subs.HttpSubscription,
 		Logger:          logger.Named("http-mux"),
 		ReportOnNoMatch: true,
@@ -106,37 +108,14 @@ func NewHttpMux(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, lo
 	mux.Use(middlewares.Recoverer)
 	mux.UsePreflight(middlewares.ValidationMiddleware(logger))
 
-	var cancel context.CancelFunc
-
-	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			logger.Info("Starting HTTP EventMux...")
-
-			var childCtx context.Context
-			childCtx, cancel = context.WithCancel(context.Background()) //nolint:gosec // cancel is called in OnStop hook
-
-			go func() {
-				if err := mux.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("Error crítico en HTTP EventMux", zap.Error(err))
-				}
-			}()
-			return nil
-		},
-		OnStop: func(ctx context.Context) error {
-			logger.Info("EventMux shutdown manejado por cancelación externa.")
-			if cancel != nil {
-				cancel()
-			}
-			return nil
-		},
-	})
-
+	fxeventmux.BindLifecycle(lc, mux, logger, sd)
 	return mux
 }
 
 // NewPrincipalMux Provider para el EventMux principal.
-func NewPrincipalMux(lc fx.Lifecycle, params EventParams, subs SubscriptionParams, logger *zap.Logger) *router.EventMux {
+func NewPrincipalMux(lc fx.Lifecycle, subs SubscriptionParams, logger *zap.Logger, sd fx.Shutdowner) *router.EventMux {
 	mux := router.NewEventMux(router.Config{
+		Name:         "pubsub-principal",
 		Subscription: subs.AppSubscription,
 		Logger:       logger.Named("pubsub-mux-principal"),
 	})
@@ -150,30 +129,7 @@ func NewPrincipalMux(lc fx.Lifecycle, params EventParams, subs SubscriptionParam
 		middlewares.Recoverer,
 	)
 
-	var cancel context.CancelFunc
-
-	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			logger.Info("Starting EventMux...")
-
-			var childCtx context.Context
-			childCtx, cancel = context.WithCancel(context.Background()) //nolint:gosec // cancel is called in OnStop hook
-
-			go func() {
-				if err := mux.Run(childCtx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("Error crítico en EventMux", zap.Error(err))
-				}
-			}()
-			return nil
-		},
-		OnStop: func(ctx context.Context) error {
-			logger.Info("EventMux shutdown manejado por cancelación externa.")
-			if cancel != nil {
-				cancel()
-			}
-			return nil
-		},
-	})
+	fxeventmux.BindLifecycle(lc, mux, logger, sd)
 	return mux
 }
 

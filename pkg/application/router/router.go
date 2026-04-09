@@ -30,10 +30,14 @@ type Route struct {
 
 // Config holds the EventMux configuration.
 type Config struct {
+	Name            string // Identifies this mux in logs (e.g. "pubsub-orders", "http-commands").
 	Subscription    port.Subscription
 	Logger          *zap.Logger
 	ReportOnNoMatch bool
 }
+
+// OnErrorFunc is called when RunBackground detects a fatal (non-cancellation) error.
+type OnErrorFunc func(err error)
 
 type EventMux struct {
 	cfg                  Config
@@ -49,6 +53,58 @@ func NewEventMux(cfg Config) *EventMux {
 	}
 	return &EventMux{
 		cfg: cfg,
+	}
+}
+
+// Name returns the mux name for logging. Defaults to "eventmux" if not configured.
+func (mux *EventMux) Name() string {
+	if mux.cfg.Name != "" {
+		return mux.cfg.Name
+	}
+	return "eventmux"
+}
+
+// RunBackground starts the EventMux in a background goroutine.
+// parentCtx allows inheriting values (e.g. TraceID) or upstream cancellations.
+// onError is called if mux.Run exits with a non-cancellation error (can be nil).
+// Returns a stop function; pass a timeout to avoid infinite hangs.
+func (mux *EventMux) RunBackground(parentCtx context.Context, onError OnErrorFunc) (stop func(timeout time.Duration) error) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancelCause(parentCtx)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		err := mux.Run(ctx)
+
+		if err != nil && !errors.Is(err, context.Canceled) {
+			mux.cfg.Logger.Error("EventMux crashed",
+				zap.Error(err),
+				zap.String("name", mux.Name()),
+				zap.NamedError("cause", context.Cause(ctx)),
+			)
+			if onError != nil {
+				onError(err)
+			}
+			return
+		}
+
+		mux.cfg.Logger.Info("EventMux stopped",
+			zap.String("name", mux.Name()),
+			zap.NamedError("cause", context.Cause(ctx)),
+		)
+	}()
+
+	return func(timeout time.Duration) error {
+		cancel(errors.New("shutdown requested"))
+		select {
+		case <-done:
+			return nil
+		case <-time.After(timeout):
+			return fmt.Errorf("eventmux %s: stop timeout after %s", mux.Name(), timeout)
+		}
 	}
 }
 
