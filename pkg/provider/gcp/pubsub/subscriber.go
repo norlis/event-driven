@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
-	"cloud.google.com/go/pubsub"
 	gpubsub "cloud.google.com/go/pubsub/v2"
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	"github.com/norlis/event-driven/pkg/event"
-	"go.uber.org/zap"
 )
 
 type SubscriberConfig struct {
@@ -27,10 +26,10 @@ type SubscriberConfig struct {
 type Subscriber struct {
 	client *gpubsub.Client
 	cfg    SubscriberConfig
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
-func NewSubscriber(client *gpubsub.Client, cfg SubscriberConfig, logger *zap.Logger) *Subscriber {
+func NewSubscriber(client *gpubsub.Client, cfg SubscriberConfig, logger *slog.Logger) *Subscriber {
 	return &Subscriber{
 		client: client,
 		cfg:    cfg,
@@ -47,13 +46,16 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	subscriber.ReceiveSettings.MaxExtension = s.cfg.MaxExtension
 
 	s.logger.Info("Starting Pub/Sub message reception",
-		zap.String("subscriptionID", s.cfg.SubscriptionID),
-		zap.Int("maxOutstandingMessages", subscriber.ReceiveSettings.MaxOutstandingMessages),
-		zap.Int("numGoroutines", subscriber.ReceiveSettings.NumGoroutines),
+		slog.String("subscriptionID", s.cfg.SubscriptionID),
+		slog.Int("maxOutstandingMessages", subscriber.ReceiveSettings.MaxOutstandingMessages),
+		slog.Int("numGoroutines", subscriber.ReceiveSettings.NumGoroutines),
 	)
 
-	err := subscriber.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
-		s.logger.Debug("Pub/Sub message received", zap.String("messageID", m.ID), zap.Any("attributes", m.Attributes))
+	err := subscriber.Receive(ctx, func(ctx context.Context, m *gpubsub.Message) {
+		s.logger.Debug("Pub/Sub message received",
+			slog.String("messageID", m.ID),
+			slog.Any("attributes", m.Attributes),
+		)
 
 		ce := s.toCloudEvent(m)
 		domainMsg := event.NewMessage(ce, m.Ack, m.Nack)
@@ -61,23 +63,26 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	})
 
 	if err != nil && !errors.Is(err, context.Canceled) {
-		s.logger.Error("Pub/Sub Receive error", zap.Error(err), zap.String("subscriptionID", s.cfg.SubscriptionID))
+		s.logger.Error("Pub/Sub Receive error",
+			slog.Any("error", err),
+			slog.String("subscriptionID", s.cfg.SubscriptionID),
+		)
 		return fmt.Errorf("sub.Receive for %s: %w", s.cfg.SubscriptionID, err)
 	}
-	s.logger.Info("Pub/Sub message reception stopped", zap.String("subscriptionID", s.cfg.SubscriptionID))
+	s.logger.Info("Pub/Sub message reception stopped", slog.String("subscriptionID", s.cfg.SubscriptionID))
 	return nil
 }
 
-func (s *Subscriber) toCloudEvent(m *pubsub.Message) cloudevents.Event {
+func (s *Subscriber) toCloudEvent(m *gpubsub.Message) cloudevents.Event {
 	// Structured content mode: entire CloudEvent is JSON-encoded in Message.Data.
 	if ct := m.Attributes["Content-Type"]; ct == "application/cloudevents+json" {
 		var ce cloudevents.Event
 		if err := json.Unmarshal(m.Data, &ce); err == nil {
-			s.logger.Debug("Decoded structured content mode CloudEvent", zap.String("id", ce.ID()))
+			s.logger.Debug("Decoded structured content mode CloudEvent", slog.String("id", ce.ID()))
 			return ce
 		}
 		s.logger.Warn("Failed to decode structured CloudEvent, falling back to binary mode",
-			zap.String("messageID", m.ID))
+			slog.String("messageID", m.ID))
 	}
 
 	// Binary content mode: CE attributes in message attributes, data in Message.Data.

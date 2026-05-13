@@ -20,7 +20,7 @@ func mySpecificHandler(_ context.Context, data MyData) (json.RawMessage, error) 
 	return []byte("processed: " + data.ID), nil
 }
 
-func TestWrapHandler(t *testing.T) {
+func TestWrap(t *testing.T) {
 	t.Parallel()
 
 	wrapped := Wrap(mySpecificHandler)
@@ -51,14 +51,14 @@ func TestWrapHandler(t *testing.T) {
 			expectedOut: nil,
 			expectErr:   true,
 			// reflect.TypeFor[T]() prints the full type name
-			expectedErrMsg: fmt.Sprintf("handler: expected router.MyData but got %T", "not MyData"),
+			expectedErrMsg: fmt.Sprintf("handler: expected eventmux.MyData but got %T", "not MyData"),
 		},
 		{
 			name:           "Nil input, incorrect type",
 			input:          nil,
 			expectedOut:    nil,
 			expectErr:      true,
-			expectedErrMsg: "handler: expected router.MyData but got <nil>",
+			expectedErrMsg: "handler: expected eventmux.MyData but got <nil>",
 		},
 	}
 

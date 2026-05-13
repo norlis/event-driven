@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/norlis/event-driven/pkg/eventmux"
-	"go.uber.org/zap"
 )
 
 type Predicate struct {
@@ -17,36 +17,35 @@ type Predicate struct {
 
 type Skipper struct {
 	predicates []Predicate
-	logger     *zap.Logger
+	logger     *slog.Logger
 }
 
 // New creates a new Skipper middleware.
-func New(logger *zap.Logger, predicates ...Predicate) Skipper {
+func New(logger *slog.Logger, predicates ...Predicate) Skipper {
 	return Skipper{
 		predicates: predicates,
-		logger:     logger.Named("ignore-errors"),
+		logger:     logger.With(slog.String("logger", "ignore-errors")),
 	}
 }
 
 // Middleware returns the Skipper middleware.
-// uso
 //
-//	middlewares.New(
-//				logger,
-//				middlewares.ByErr(validations.ErrInvalidObject),
-//				middlewares.ByErr(validations.ErrInvalidValidations),
-//				middlewares.ByType[validator.ValidationErrors](),
-//			).Middleware
+//	skiperr.New(
+//	    logger,
+//	    skiperr.ByErr("invalid-object", validations.ErrInvalidObject),
+//	    skiperr.ByErr("invalid-validations", validations.ErrInvalidValidations),
+//	    skiperr.ByType[validator.ValidationErrors]("validator-errors"),
+//	).Middleware
 func (i Skipper) Middleware(next eventmux.HandlerFunc) eventmux.HandlerFunc {
 	return func(ctx context.Context, data any) (result json.RawMessage, err error) {
 		result, err = next(ctx, data)
 		if err != nil {
 			for _, predicate := range i.predicates {
-				if predicate.Matches(err) { // Llama a la función Matches del predicado
+				if predicate.Matches(err) {
 					if i.logger != nil {
-						i.logger.Info("Middleware Skipper: Error ignorado por predicado",
-							zap.Error(err),
-							zap.String("predicate", predicate.Description),
+						i.logger.Info("Skipper: error ignored by predicate",
+							slog.Any("error", err),
+							slog.String("predicate", predicate.Description),
 						)
 					}
 					return result, nil
@@ -58,7 +57,7 @@ func (i Skipper) Middleware(next eventmux.HandlerFunc) eventmux.HandlerFunc {
 	}
 }
 
-// ByErr crea un predicado para ignorar una instancia de error centinela específica.
+// ByErr creates a predicate that ignores a specific sentinel error instance.
 func ByErr(name string, targetErr error) Predicate {
 	return Predicate{
 		Description: fmt.Sprintf("Err: (%s)", targetErr.Error()),
@@ -68,7 +67,7 @@ func ByErr(name string, targetErr error) Predicate {
 	}
 }
 
-// ByType crea un predicado genérico para ignorar cualquier error de un tipo específico.
+// ByType creates a generic predicate that ignores any error of a specific type.
 func ByType[T error](name string) Predicate {
 	return Predicate{
 		Description: fmt.Sprintf("ErrType: (%s)", name),

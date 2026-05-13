@@ -2,12 +2,12 @@ package eventhttp
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/norlis/event-driven/pkg/event"
-	"github.com/norlis/event-driven/pkg/eventmux/middleware/validate"
-	"go.uber.org/zap"
+	"github.com/norlis/event-driven/pkg/middleware/validate"
 )
 
 type ErrorRule struct {
@@ -41,13 +41,13 @@ func NewErrorResponder() *ErrorResponder {
 	}
 }
 
-func (e *ErrorResponder) Respond(w http.ResponseWriter, r *http.Request, err error, log *zap.Logger, msgID string) bool {
+func (e *ErrorResponder) Respond(w http.ResponseWriter, r *http.Request, err error, log *slog.Logger, msgID string) bool {
 	for _, rule := range e.rules {
 		if !rule.Match(err) {
 			continue
 		}
 
-		log.Warn(rule.LogMessage, zap.Error(err), zap.String("messageUUID", msgID))
+		log.Warn(rule.LogMessage, slog.Any("error", err), slog.String("messageUUID", msgID))
 
 		NewResponseBuilder().
 			WithID(msgID, uuid.New().String(), uuid.New().String()).

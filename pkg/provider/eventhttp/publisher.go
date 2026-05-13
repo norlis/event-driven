@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
-	"go.uber.org/zap"
 )
 
 // TokenFunc returns an authentication token. Implementations should handle
@@ -35,13 +35,13 @@ type PublisherConfig struct {
 // Publisher publishes CloudEvents to an HTTP endpoint using binary content mode
 // (Ce-* headers + body as data), following the CloudEvents HTTP protocol binding spec.
 type Publisher struct {
-	cfg    PublisherConfig
-	client *http.Client
-	logger      *zap.Logger
+	cfg         PublisherConfig
+	client      *http.Client
+	logger      *slog.Logger
 	tokenHeader string
 }
 
-func NewPublisher(cfg PublisherConfig, logger *zap.Logger) *Publisher {
+func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = 10 * time.Second
@@ -109,9 +109,9 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 	}
 
 	p.logger.Debug("CloudEvent published via HTTP",
-		zap.String("targetURL", p.cfg.TargetURL),
-		zap.String("ceId", ce.ID()),
-		zap.Int("status", resp.StatusCode),
+		slog.String("targetURL", p.cfg.TargetURL),
+		slog.String("ceId", ce.ID()),
+		slog.Int("status", resp.StatusCode),
 	)
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -13,19 +14,18 @@ import (
 	"github.com/norlis/event-driven/pkg/event"
 	"github.com/norlis/event-driven/pkg/eventmux"
 	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
-	"go.uber.org/zap"
 )
 
 type SubscriberConfig struct {
 	Pattern    string
-	Logger     *zap.Logger
+	Logger     *slog.Logger
 	Middleware middleware.Middleware
 }
 
 type Subscriber struct {
 	server         *http.ServeMux
 	config         SubscriberConfig
-	logger         *zap.Logger
+	logger         *slog.Logger
 	errorResponder *ErrorResponder
 }
 
@@ -43,7 +43,10 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 		ce, err := h.extractCloudEvent(r)
 		if err != nil {
 			messageID := uuid.NewString()
-			h.logger.Error("Failed to extract CloudEvent from request", zap.Error(err), zap.String("path", h.config.Pattern))
+			h.logger.Error("Failed to extract CloudEvent from request",
+				slog.Any("error", err),
+				slog.String("path", h.config.Pattern),
+			)
 			NewResponseBuilder().
 				WithID(messageID, uuid.New().String(), uuid.New().String()).
 				WithInstance(r.Pattern).
@@ -56,9 +59,9 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 
 		messageID := ce.ID()
 		h.logger.Debug("Received HTTP message",
-			zap.String("id", messageID),
-			zap.Int("payloadSize", len(ce.Data())),
-			zap.String("path", h.config.Pattern),
+			slog.String("id", messageID),
+			slog.Int("payloadSize", len(ce.Data())),
+			slog.String("path", h.config.Pattern),
 		)
 
 		msg := event.NewMessageWithoutAck(*ce)
@@ -77,7 +80,7 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 				}
 			}
 		case <-time.After(5 * time.Second):
-			h.logger.Error("Timeout waiting for router preflight result", zap.String("id", messageID))
+			h.logger.Error("Timeout waiting for router preflight result", slog.String("id", messageID))
 			NewResponseBuilder().
 				WithID(messageID, uuid.New().String(), uuid.New().String()).
 				WithError("Internal processing timeout", "TIMEOUT").

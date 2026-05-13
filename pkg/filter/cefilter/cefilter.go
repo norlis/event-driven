@@ -7,47 +7,50 @@ import (
 	"github.com/norlis/event-driven/pkg/eventmux"
 )
 
-// TypeFilter matches messages by their CloudEvent type attribute.
-type TypeFilter struct {
+// typeFilter matches messages by their CloudEvent type attribute.
+type typeFilter struct {
 	allowedTypes map[string]struct{}
 }
 
-func ByType(types ...string) *TypeFilter {
+// ByType returns a filter that matches messages whose CloudEvent type is in the given list.
+func ByType(types ...string) eventmux.Filter {
 	m := make(map[string]struct{}, len(types))
 	for _, t := range types {
 		m[t] = struct{}{}
 	}
-	return &TypeFilter{allowedTypes: m}
+	return &typeFilter{allowedTypes: m}
 }
 
-func (f *TypeFilter) Match(msg *event.Message) bool {
+func (f *typeFilter) Match(msg *event.Message) bool {
 	_, ok := f.allowedTypes[msg.Type()]
 	return ok
 }
 
-// SourceFilter matches messages whose CloudEvent source starts with the given prefix.
-type SourceFilter struct {
+// sourceFilter matches messages whose CloudEvent source starts with the given prefix.
+type sourceFilter struct {
 	prefix string
 }
 
-func BySource(prefix string) *SourceFilter {
-	return &SourceFilter{prefix: prefix}
+// BySource returns a filter that matches messages whose CloudEvent source starts with prefix.
+func BySource(prefix string) eventmux.Filter {
+	return &sourceFilter{prefix: prefix}
 }
 
-func (f *SourceFilter) Match(msg *event.Message) bool {
+func (f *sourceFilter) Match(msg *event.Message) bool {
 	return strings.HasPrefix(msg.Source(), f.prefix)
 }
 
-// CompositeFilter combines multiple filters with logical AND.
-type CompositeFilter struct {
+// compositeFilter combines multiple filters with logical AND.
+type compositeFilter struct {
 	filters []eventmux.Filter
 }
 
-func All(filters ...eventmux.Filter) *CompositeFilter {
-	return &CompositeFilter{filters: filters}
+// All returns a filter that matches only when every supplied filter matches.
+func All(filters ...eventmux.Filter) eventmux.Filter {
+	return &compositeFilter{filters: filters}
 }
 
-func (f *CompositeFilter) Match(msg *event.Message) bool {
+func (f *compositeFilter) Match(msg *event.Message) bool {
 	for _, filter := range f.filters {
 		if !filter.Match(msg) {
 			return false

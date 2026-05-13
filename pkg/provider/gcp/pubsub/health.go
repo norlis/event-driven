@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"cloud.google.com/go/pubsub/v2"
+	gpubsub "cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -28,7 +28,7 @@ func WithSubscriptions(subscriptions ...string) HealthCheckerOption {
 }
 
 type HealthChecker struct {
-	client        *pubsub.Client
+	client        *gpubsub.Client
 	projectID     string
 	topics        []string
 	subscriptions []string
@@ -86,7 +86,7 @@ func (p *HealthChecker) Check() error {
 	return nil
 }
 
-func NewHealthChecker(client *pubsub.Client, projectID string, opts ...HealthCheckerOption) *HealthChecker {
+func NewHealthChecker(client *gpubsub.Client, projectID string, opts ...HealthCheckerOption) *HealthChecker {
 	checker := &HealthChecker{
 		client:        client,
 		projectID:     projectID,

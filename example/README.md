@@ -1,39 +1,54 @@
 # Example
 
+End-to-end demo showing cross-transport routing: HTTP → Pub/Sub → HTTP webhook
+(and the reverse). Four routes are wired in `events.go`.
+
 ## Environment variables
 
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `GCP_PROJECT_ID` | yes | — | GCP project that owns the Pub/Sub topic + subscription. |
+| `EVT_SUBSCRIPTION` | yes | — | Pub/Sub subscription ID consumed by `PrincipalMux`. |
+| `EVT_PUBLISH` | no | — | Pub/Sub topic where handler results are published. If empty, the result publisher is disabled. |
+| `WEBHOOK_URL` | yes (for HTTP-2 / PS-1 routes) | — | HTTPS endpoint used by the webhook publisher (e.g. a `https://webhook.site/...` URL). |
+| `LOG_LEVEL` | no | `info` | `debug` enables verbose logging; anything else maps to `info`. |
+
 ```bash
-export EVT_PUBLISH=t-event
+export GCP_PROJECT_ID=my-project
 export EVT_SUBSCRIPTION=s-event
-export GCP_PROJECT_ID=project-test
+export EVT_PUBLISH=t-event
+export WEBHOOK_URL="https://webhook.site/<your-uuid>"
 export LOG_LEVEL=debug
+
+go run ./example/cmd
 ```
+
+The server listens on `:8880`. Health endpoints: `/status`, `/live`, `/ready`.
 
 ## Publishers
 
-The library provides two publisher implementations:
+The library provides two publisher implementations; both satisfy
+`eventmux.Publisher` and can be passed interchangeably to `mux.Register(...)`.
 
 | Publisher | Package | Target | Use case |
 |---|---|---|---|
-| `GCPPublisher` | `pkg/adapter/pubsub` | Google Cloud Pub/Sub topic | Async event pipelines |
-| `HTTPPublisher` | `pkg/adapter/httpdriven` | Any HTTP endpoint | Webhooks, external APIs |
+| `pubsub.Publisher` | `pkg/provider/gcp/pubsub` | Google Cloud Pub/Sub topic | Async event pipelines |
+| `eventhttp.Publisher` | `pkg/provider/eventhttp` | Any HTTP endpoint | Webhooks, external APIs |
 
-Both implement `port.Publisher` — they receive a `cloudevents.Event` and deliver it to their target.
-
-### HTTPPublisher
+### `eventhttp.Publisher`
 
 Publishes CloudEvents using **binary content mode** (attributes as `Ce-*` headers, data as body).
 
 ```go
-pub := httpdriven.NewHTTPPublisher(httpdriven.HTTPPublisherConfig{
-    TargetURL: "https://webhook.site/...",
+pub := eventhttp.NewPublisher(eventhttp.PublisherConfig{
+    TargetURL: os.Getenv("WEBHOOK_URL"),
     Timeout:   5 * time.Second,
 }, logger)
 ```
 
-### GCPPublisher
+### `pubsub.Publisher`
 
-Publishes CloudEvents to a Pub/Sub topic. Attributes are stored as message attributes with `ce-` prefix.
+Publishes CloudEvents to a Pub/Sub topic. Attributes are stored as message attributes with the `ce-` prefix.
 
 ```go
 pub := pubsub.NewPublisher(client, pubsub.PublisherConfig{
@@ -44,7 +59,7 @@ pub := pubsub.NewPublisher(client, pubsub.PublisherConfig{
 
 ## HTTP Content Modes
 
-The HTTP subscriber (`pkg/adapter/httpdriven`) accepts CloudEvents in three ways:
+The HTTP subscriber (`pkg/provider/eventhttp`) accepts CloudEvents in three ways:
 
 ### Binary content mode
 
@@ -85,7 +100,7 @@ Content-Type: application/cloudevents+json
 
 No CloudEvents headers. The subscriber builds a CloudEvent with defaults:
 - `id`: from `X-Message-UUID` header or auto-generated UUID
-- `type`: `http.command`
+- `type`: `com.example.http.command`
 - `source`: derived from request URL
 
 ```
@@ -95,12 +110,17 @@ Content-Type: application/json
 {"name": "test", "age": 25}
 ```
 
+## Routes wired in this example
+
+See `events.go`. Same handlers (`UseCase.Execute` / `UseCase.Command`) are reused.
+
+| ID | Mux | Filter | Publisher | Notes |
+|---|---|---|---|---|
+| HTTP-1 | `HttpMux` | `ByType("http.command")` | Pub/Sub topic | Cross: HTTP → Pub/Sub. Result picked up by PS-1. |
+| HTTP-2 | `HttpMux` | `ByType("http.command.webhook") AND JMESPath` | Webhook | Demonstrates `cefilter.All` + JMESPath. |
+| PS-1 | `PrincipalMux` | `ByType("http.command.result")` | Webhook | Closes the HTTP → Pub/Sub → HTTP round trip. |
+| PS-2 | `PrincipalMux` | `ByType("com.example.person.created", "com.example.person.updated")` | Pub/Sub topic | Domain event pipeline. |
+
 ## Test scenarios
 
-See `test.http` for ready-to-use requests:
-
-| Scenario | Flow | Ce-Type |
-|---|---|---|
-| 1 — Direct webhook | HTTP → handler → webhook.site | `http.command.webhook` |
-| 2 — Via Pub/Sub | HTTP → handler → Pub/Sub → handler → webhook.site | `http.command` |
-| Fallback | HTTP (no CE headers) → handler → Pub/Sub | plain JSON |
+See `test.http` for ready-to-use requests.

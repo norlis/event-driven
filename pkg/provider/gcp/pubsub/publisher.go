@@ -3,12 +3,11 @@ package pubsub
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
-	"cloud.google.com/go/pubsub"
 	gpubsub "cloud.google.com/go/pubsub/v2"
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
-	"go.uber.org/zap"
 )
 
 type PublisherConfig struct {
@@ -19,10 +18,10 @@ type PublisherConfig struct {
 type Publisher struct {
 	client  *gpubsub.Client
 	topicID string
-	logger  *zap.Logger
+	logger  *slog.Logger
 }
 
-func NewPublisher(client *gpubsub.Client, cfg PublisherConfig, logger *zap.Logger) *Publisher {
+func NewPublisher(client *gpubsub.Client, cfg PublisherConfig, logger *slog.Logger) *Publisher {
 	return &Publisher{
 		client:  client,
 		topicID: cfg.TopicID,
@@ -52,7 +51,7 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 		}
 	}
 
-	result := publisher.Publish(ctx, &pubsub.Message{
+	result := publisher.Publish(ctx, &gpubsub.Message{
 		Data:       ce.Data(),
 		Attributes: attrs,
 	})
@@ -60,14 +59,16 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 	id, err := result.Get(ctx)
 	if err != nil {
 		p.logger.Error("Failed to publish message to Pub/Sub",
-			zap.Error(err),
-			zap.String("topicID", p.topicID),
-			zap.String("originalID", ce.ID()))
+			slog.Any("error", err),
+			slog.String("topicID", p.topicID),
+			slog.String("originalID", ce.ID()),
+		)
 		return fmt.Errorf("pubsub publish: %w", err)
 	}
 	p.logger.Debug("Message published to Pub/Sub",
-		zap.String("topicID", p.topicID),
-		zap.String("publishedID", id),
-		zap.String("originalID", ce.ID()))
+		slog.String("topicID", p.topicID),
+		slog.String("publishedID", id),
+		slog.String("originalID", ce.ID()),
+	)
 	return nil
 }

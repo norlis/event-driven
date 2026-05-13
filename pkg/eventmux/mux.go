@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/norlis/event-driven/pkg/event"
 	"github.com/norlis/event-driven/pkg/eventmux/metadata"
-	"go.uber.org/zap"
 )
 
 var noopHandler = func(ctx context.Context, data any) (json.RawMessage, error) { return nil, nil }
@@ -30,7 +30,7 @@ type Route struct {
 type Config struct {
 	Name            string // Identifies this mux in logs (e.g. "pubsub-orders", "http-commands").
 	Subscription    Subscription
-	Logger          *zap.Logger
+	Logger          *slog.Logger
 	ReportOnNoMatch bool
 }
 
@@ -44,10 +44,10 @@ type Mux struct {
 	preflightMiddlewares []Middleware
 }
 
-// NewEventMux creates a new Mux for a given Subscription source (PubSub, HTTP, etc.).
-func NewEventMux(cfg Config) *Mux {
+// New creates a new Mux for a given Subscription source (PubSub, HTTP, etc.).
+func New(cfg Config) *Mux {
 	if cfg.Logger == nil {
-		cfg.Logger = zap.NewNop()
+		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 	return &Mux{
 		cfg: cfg,
@@ -79,9 +79,9 @@ func (mux *Mux) RunBackground(parentCtx context.Context, onError OnErrorFunc) (s
 
 		if err != nil && !errors.Is(err, context.Canceled) {
 			mux.cfg.Logger.Error("Mux crashed",
-				zap.Error(err),
-				zap.String("name", mux.Name()),
-				zap.NamedError("cause", context.Cause(ctx)),
+				slog.Any("error", err),
+				slog.String("name", mux.Name()),
+				slog.Any("cause", context.Cause(ctx)),
 			)
 			if onError != nil {
 				onError(err)
@@ -90,8 +90,8 @@ func (mux *Mux) RunBackground(parentCtx context.Context, onError OnErrorFunc) (s
 		}
 
 		mux.cfg.Logger.Info("Mux stopped",
-			zap.String("name", mux.Name()),
-			zap.NamedError("cause", context.Cause(ctx)),
+			slog.String("name", mux.Name()),
+			slog.Any("cause", context.Cause(ctx)),
 		)
 	}()
 
@@ -114,7 +114,7 @@ func (mux *Mux) Register(pub Publisher, filter Filter, objectType any, handler H
 		Handler:    handler,
 		ObjectType: objectType,
 	})
-	mux.cfg.Logger.Info("Route registered", zap.Int("totalRoutes", len(mux.routes)))
+	mux.cfg.Logger.Info("Route registered", slog.Int("totalRoutes", len(mux.routes)))
 }
 
 // Run starts the Subscription and processes all registered routes.
@@ -123,9 +123,9 @@ func (mux *Mux) Run(ctx context.Context) error {
 
 	if err := mux.cfg.Subscription.Start(ctx, func(msg *event.Message) {
 		mux.cfg.Logger.Debug("Mux received message",
-			zap.String("id", msg.ID()),
-			zap.String("type", msg.Type()),
-			zap.String("source", msg.Source()),
+			slog.String("id", msg.ID()),
+			slog.String("type", msg.Type()),
+			slog.String("source", msg.Source()),
 		)
 
 		matchingRoute := mux.findMatchingRoute(msg)
@@ -134,7 +134,7 @@ func (mux *Mux) Run(ctx context.Context) error {
 			return
 		}
 
-		mux.cfg.Logger.Debug("Message matched filter, processing route...", zap.String("id", msg.ID()))
+		mux.cfg.Logger.Debug("Message matched filter, processing route...", slog.String("id", msg.ID()))
 		mux.processAndHandle(msg, matchingRoute)
 	}); err != nil {
 		return fmt.Errorf("subscription start: %w", err)
@@ -152,7 +152,7 @@ func (mux *Mux) findMatchingRoute(msg *event.Message) *Route {
 }
 
 func (mux *Mux) handleNoRouteFound(msg *event.Message) {
-	mux.cfg.Logger.Debug("Message did not match any route", zap.String("id", msg.ID()))
+	mux.cfg.Logger.Debug("Message did not match any route", slog.String("id", msg.ID()))
 	if mux.cfg.ReportOnNoMatch {
 		msg.NotifyPreflightDone(event.ErrNoRoute)
 	}
@@ -163,9 +163,9 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 	eventPayload, err := decodeInto(reflect.TypeOf(rt.ObjectType), msg.Data())
 	if err != nil {
 		mux.cfg.Logger.Error("Failed to unmarshal payload",
-			zap.Error(err),
-			zap.String("id", msg.ID()),
-			zap.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
+			slog.Any("error", err),
+			slog.String("id", msg.ID()),
+			slog.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
 		)
 		msg.NotifyPreflightDone(err)
 		msg.Nack()
@@ -189,16 +189,16 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 	data, err := effectiveHandler(handlerCtx, eventPayload)
 	if err != nil {
 		mux.cfg.Logger.Error("Handler execution failed",
-			zap.Error(err),
-			zap.String("id", msg.ID()),
+			slog.Any("error", err),
+			slog.String("id", msg.ID()),
 		)
 
 		// NonRetryable → Ack (discard). Retrying won't fix it (e.g. validation, bad payload).
 		// Retryable error → Nack. The broker will redeliver with its own backoff/DLQ policy.
 		if _, ok := errors.AsType[*event.NonRetryable](err); ok {
 			mux.cfg.Logger.Warn("Non-retryable error, discarding message",
-				zap.Error(err),
-				zap.String("id", msg.ID()),
+				slog.Any("error", err),
+				slog.String("id", msg.ID()),
 			)
 			msg.Ack()
 		} else {
@@ -235,8 +235,8 @@ func (mux *Mux) publishResult(msg *event.Message, data json.RawMessage, store *m
 
 	if err := pub.Publish(ce); err != nil {
 		mux.cfg.Logger.Error("Failed to publish result",
-			zap.Error(err),
-			zap.String("id", msg.ID()),
+			slog.Any("error", err),
+			slog.String("id", msg.ID()),
 		)
 	}
 }

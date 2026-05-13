@@ -11,7 +11,7 @@ type SampleStruct struct {
 	Value int    `json:"value"`
 }
 
-func TestNewInterface(t *testing.T) {
+func TestDecodeInto(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
