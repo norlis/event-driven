@@ -1,0 +1,112 @@
+### Routes wired in example/events.go:
+###   HTTP-1  ByType("http.command")                                       → publishes to Pub/Sub topic
+###   HTTP-2  ByType("http.command.webhook") AND JMESPath(name ∈ {webhook,pepe}) → publishes to webhook
+###   PS-1    ByType("http.command.result")                                → publishes to webhook
+###   PS-2    ByType("com.example.person.created"|".updated")              → publishes to Pub/Sub topic
+###
+### Round trip "HTTP → Pub/Sub → webhook" = HTTP-1 + PS-1.
+
+### ─── HTTP-1 · binary CE — round trip HTTP → Pub/Sub → webhook ────────
+POST http://localhost:8880/command
+Content-Type: application/json
+Ce-Id: http1-bin-001
+Ce-Specversion: 1.0
+Ce-Type: http.command
+Ce-Source: //test/http-client
+
+{
+  "name": "via-pubsub-to-webhook",
+  "age": 25
+}
+
+### ─── HTTP-1 · structured CE — same round trip ────────────────────────
+POST http://localhost:8880/command
+Content-Type: application/cloudevents+json
+
+{
+  "specversion": "1.0",
+  "id": "http1-struct-0000009",
+  "type": "http.command",
+  "source": "//test/http-client",
+  "datacontenttype": "application/json",
+  "data": {
+    "name": "structured-via-pubsub",
+    "age": 91
+  }
+}
+
+### ─── HTTP-2 · binary CE — direct to webhook (JMESPath match: webhook) ─
+POST http://localhost:8880/command
+Content-Type: application/json
+Ce-Id: http2-bin-webhook
+Ce-Specversion: 1.0
+Ce-Type: http.command.webhook
+Ce-Source: //test/http-client
+
+{
+  "name": "webhook",
+  "age": 28
+}
+
+### ─── HTTP-2 · binary CE — direct to webhook (JMESPath match: pepe) ───
+POST http://localhost:8880/command
+Content-Type: application/json
+Ce-Id: http2-bin-pepe
+Ce-Specversion: 1.0
+Ce-Type: http.command.webhook
+Ce-Source: //test/http-client
+
+{
+  "name": "pepe",
+  "age": 33
+}
+
+### ─── HTTP-2 · structured CE — JMESPath REJECTS (name ∉ allowlist) ────
+### Expected: 400, "no matching route" (CE type matches but JMESPath fails).
+POST http://localhost:8880/command
+Content-Type: application/cloudevents+json
+
+{
+  "specversion": "1.0",
+  "id": "http2-struct-reject",
+  "type": "http.command.webhook",
+  "source": "//test/http-client",
+  "datacontenttype": "application/json",
+  "data": {
+    "name": "stranger",
+    "age": 40
+  }
+}
+
+### ─── Preflight validation — payload missing required field "age" ─────
+### Expected: 400, validation failed (preflight middleware blocks before handler).
+POST http://localhost:8880/command
+Content-Type: application/json
+Ce-Id: validate-fail-001
+Ce-Specversion: 1.0
+Ce-Type: http.command
+Ce-Source: //test/http-client
+
+{
+  "name": "missing-age"
+}
+
+### ─── Fallback — plain HTTP, no CE headers ────────────────────────────
+### Subscriber assigns type "com.example.http.command". No route covers it.
+### Expected: 400, "no matching route".
+POST http://localhost:8880/command
+Content-Type: application/json
+
+{
+  "name": "no-headers",
+  "age": 21
+}
+
+### ─── Health endpoints (no auth) ──────────────────────────────────────
+GET http://localhost:8880/status
+
+###
+GET http://localhost:8880/live
+
+###
+GET http://localhost:8880/ready

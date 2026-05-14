@@ -1,276 +1,360 @@
-# Event Router - Clean Architecture
+# Event-Driven — CloudEvents Multiplexer Library
 
-## Summary
+A Go library for routing and processing events from multiple sources (Google Cloud Pub/Sub, AWS SNS+SQS, HTTP) using the [CloudEvents](https://cloudevents.io/) standard.
 
-This project implements an event routing system using Google Cloud Pub/Sub and the Clean Architecture pattern.
+## Key Features
 
-## Environment Variables
+- **EventMux** — Multiplexes events to handlers based on filters, analogous to `http.ServeMux` for events.
+- **CloudEvents native** — `Message` composes `cloudevents.Event` with delivery mechanics (Ack/Nack).
+- **Stateless** — No in-memory queue. The transport SDK controls concurrency. Crash-safe by design.
+- **Multiple transports** — GCP Pub/Sub, AWS SNS (publish) + SQS (subscribe), HTTP (sync). Swappable through `eventmux.Publisher` / `eventmux.Subscription` interfaces.
+- **Filter families** — CloudEvent attributes (`cefilter`), payload content (`jmespath`), combinations.
+- **Middleware pipeline** — Recoverer, validation, error skipping, HTTP retry with jitter.
+- **Pluggable wire format** — `Marshaler` / `Unmarshaler` per transport for FIFO, structured-mode, custom envelopes, encryption, etc.
+- **Non-retryable errors** — `event.NonRetryableError` triggers Ack (discard) instead of Nack (redeliver).
+- **Structured logging** — `log/slog` across the entire library. No vendor logger dependency.
+- **FX integration** — `pkg/kit/fxmux` plugs the mux + FX lifecycle hooks + slog-based fxevent logger.
 
-Set the following variables to configure the example application:
+## Installation
 
-- `GCP_PROJECT_ID` – Google Cloud project identifier.
-- `EVT_APP_SUBSCRIPTION` – Pub/Sub subscription from which application events are received.
-- `EVT_TRACE_SUBSCRIPTION` – Pub/Sub subscription used for receiving trace messages.
-- `EVT_PUBLISH_TRACE_TOPIC` – Topic where processed trace information is published.
-
-```shell
-go run cmd/server/main.go 
+```bash
+go get github.com/norlis/event-driven
 ```
 
-## Architecture Overview
+Requires Go 1.26+.
 
-```
-├── go.mod
-├── go.sum
-├── cmd/
-│   └── server/
-│       ├── main.go                 # Punto de entrada, configuración de Fx, gestión del ciclo de vida.
-│       └── example/                # Módulo de ejemplo que ensambla la aplicación.
-│           ├── module.go           # Providers de Fx para todas las dependencias.
-│           ├── events.go           # Registro de rutas y handlers para los routers.
-│           ├── handlers.go         # Implementación de los casos de uso (lógica de negocio).
-│           └── configuration.go    # Carga y estructuración de la configuración.
-├── pkg/
-│   ├── domain/                     # Lógica y tipos de negocio puros. No depende de nada externo.
-│   │   ├── event/
-│   │   │   └── event.go            # Definición del sobre del evento (antes message.go).
-│   │   └── error.go                # Errores de dominio.
-│   ├── application/                # Lógica de aplicación que orquesta el flujo de datos.
-│   │   ├── router/                 # Lógica central del router, middlewares y registro de rutas.
-│   │   └── worker/                 # Implementación del dispatcher y los workers concurrentes.
-│   ├── port/                       # Interfaces (Puertos) que definen los contratos con el exterior.
-│   │   ├── publisher.go
-│   │   ├── subscriber.go
-│   │   └── filter.go
-│   ├── adapter/                    # Implementaciones concretas (Adaptadores) de los puertos.
-│   │   ├── gcppubsub/              # Adaptador para Google Cloud Pub/Sub.
-│   │   ├── http/                   # Adaptador para recibir eventos vía HTTP.
-│   │   └── jmspath/                # Adaptador para el filtrado con JMESPath.
-│   └── kit/                        # "Tool-kit" con utilidades transversales para la aplicación.
-│       ├── logger/                 # Configuración del logger estructurado (zap).
-│       └── otelsetup/              # Configuración del tracing con OpenTelemetry.
-├── deployments/                    # Archivos de despliegue (Docker, K8s, etc.).
-└── tools/                          # Herramientas de desarrollo y CI/CD.
+## Quick Start
 
+```go
+import (
+    "context"
+
+    "github.com/norlis/event-driven/pkg/eventmux"
+    "github.com/norlis/event-driven/pkg/filter/cefilter"
+    "github.com/norlis/event-driven/pkg/middleware/recover"
+    "github.com/norlis/event-driven/pkg/transport/gcp/pubsub"
+)
+
+mux := eventmux.New(eventmux.Config{
+    Subscription: subscription, // pubsub.Subscriber, sqs.Subscriber, eventhttp.Subscriber, …
+    Logger:       logger,       // *slog.Logger
+})
+
+mux.Use(recover.Middleware)
+
+mux.Register(
+    publisher,                                    // where to publish the result (nil = fire-and-forget)
+    cefilter.ByType("com.example.order.created"), // filter by CloudEvent type
+    Order{},                                      // target struct for deserialization
+    eventmux.Wrap(orderHandler.Execute),          // typed handler
+)
+
+mux.Run(ctx) // blocks until ctx is cancelled
 ```
 
-### Flow Diagram
+## Architecture
 
-**version compacta**
+```
+├── example/                            # End-to-end demo wired with Uber FX
+│   ├── cmd/main.go                     # FX bootstrap, health endpoints
+│   ├── module.go                       # FX providers (clients, muxes, subscriptions)
+│   ├── events.go                       # Route registration with filters and handlers
+│   └── handlers.go                     # Use-case implementations
+└── pkg/
+    ├── event/                          # event.Message, event.NonRetryableError, sentinel errors
+    ├── eventmux/                       # The mux itself + Publisher/Subscription/Filter contracts
+    │   ├── mux.go                      # eventmux.New, Mux, Config, Route
+    │   ├── handler.go                  # HandlerFunc, eventmux.Wrap[T]
+    │   ├── middleware.go               # Middleware, eventmux.Chain
+    │   ├── interfaces.go               # Publisher, Subscription, Filter (consumer-side)
+    │   ├── decode.go                   # Reflection-based payload decoding
+    │   └── metadata/                   # Per-message key-value store (context-scoped)
+    ├── middleware/                     # Built-in middlewares, one package per concern
+    │   ├── recover/                    # Panic recovery (recover.Middleware + PanicError)
+    │   ├── validate/                   # go-playground/validator on the decoded payload
+    │   ├── retry/                      # HTTP retry with exponential backoff + jitter
+    │   └── skiperr/                    # Swallow specific errors (predicate-based)
+    ├── filter/                         # Filter implementations
+    │   ├── cefilter/                   # By CloudEvent type / source / AND composition
+    │   └── jmespath/                   # JMESPath expression on the JSON body
+    ├── transport/                      # Concrete Publisher / Subscription implementations
+    │   ├── gcp/pubsub/                 # Pub/Sub publisher, subscriber, health, marshaler/unmarshaler
+    │   ├── aws/                        # Shared AWS SDK config + Identity (region + STS account)
+    │   │   ├── sns/                    # SNS publisher + marshaler
+    │   │   └── sqs/                    # SQS subscriber + unmarshaler (long-polling + workers)
+    │   └── eventhttp/                  # HTTP subscriber + publisher (CloudEvents bindings)
+    └── kit/                            # Cross-cutting utilities
+        ├── fxmux/                      # FX lifecycle binding + slog fxevent.Logger adapter
+        └── signal/                     # Signal-aware context (SIGINT/SIGTERM)
+```
+
+> Package-oriented layout (Bill Kennedy style): packages are organized by capability, not by Clean Architecture layer. There is no `domain/`, `application/`, `port/`, or `adapter/` namespace — interfaces live where they are consumed (`eventmux/interfaces.go`).
+
+## Flow Diagram
+
 ```mermaid
 flowchart TD
-    %% Definición de Estilos para Nodos
-    classDef subscriber fill:#85C1E9,stroke:#2E86C1,stroke-width:2px,color:#1B4F72;
-    classDef router fill:#EAECEE,stroke:#7F8C8D,stroke-width:2px,color:#2C3E50;
-    classDef dispatcher fill:#D5DBDB,stroke:#707B7C,stroke-width:2px,color:#2C3E50;
-    classDef worker fill:#F2F3F4,stroke:#BDC3C7,stroke-width:2px,color:#2C3E50;
-    classDef publisher fill:#F9E79F,stroke:#F39C12,stroke-width:2px,color:#7E5109;
+    classDef subscriber fill:#85C1E9,stroke:#2E86C1,stroke-width:2px,color:#1B4F72
+    classDef mux fill:#EAECEE,stroke:#7F8C8D,stroke-width:2px,color:#2C3E50
+    classDef publisher fill:#F9E79F,stroke:#F39C12,stroke-width:2px,color:#7E5109
 
-    A["<b>Subscriber</b><br/>(ej. Pub/Sub)"]:::subscriber;
-    B["<b>Router</b><br/>- Filtra<br/>- Deserializa<br/>- Decide Handler"]:::router;
-    C["<b>Dispatcher</b><br/>(JobQueue)"]:::dispatcher;
-    D1["<b>Worker</b>"]:::worker;
-    D2["<b>Worker</b>"]:::worker;
-    E["<b>Publisher</b><br/>(ej. Pub/Sub)"]:::publisher;
+    A["<b>Subscription</b><br/>(Pub/Sub, SQS, HTTP)"]:::subscriber
+    B["<b>EventMux</b><br/>- Filter (cefilter, jmespath)<br/>- Deserialize payload<br/>- Preflight middlewares<br/>- Execute handler (inline)<br/>- Ack / Nack"]:::mux
+    C["<b>Publisher</b><br/>(Pub/Sub, SNS, HTTP webhook)"]:::publisher
 
-    A -- "events" --> B;
-    B -- "jobs..." --> C;
-    C --> D1;
-    C --> D2; 
-    
-    D1 -- "processed" --> E;    
-    D2 -- "processed" --> E;    
-
-    B -- "processed message" --> E;
-    
-    B -. "dispatch" .-> E;
+    A -- "CloudEvent" --> B
+    B -- "result CloudEvent" --> C
 ```
-
-**sequenceDiagram**
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant PubSub as Pub/Sub (GCP)
-    participant Webhook as Webhook HTTP
-    participant Router as Event Router
-    participant Filter as JMESPath Filter
-    participant Decoder as JSON Decoder
-    participant Dispatcher as Dispatcher
-    participant Worker as Worker
+    participant Broker as Subscription (Pub/Sub / SQS / HTTP)
+    participant Mux as EventMux
+    participant Filter as Filter (cefilter / jmespath)
+    participant Preflight as Preflight Middlewares
+    participant MW as Handler Middlewares
     participant Handler as Handler Func
-    participant Publisher as Publisher (opcional)
-    participant Tempo as OTel Tempo
-    participant Zap as Logger
-    participant Prom as Prometheus
+    participant Pub as Publisher (optional)
 
-    PubSub->>Router: Recibe mensaje
-    Webhook->>Router: Recibe petición JSON
+    Broker->>Mux: CloudEvent message
+    Mux->>Filter: Match route
+    Filter-->>Mux: matched / no match
 
-    Router->>Filter: Aplica filtro JMESPath
-    Filter-->>Router: Coincide / No coincide
+    alt No match
+        Mux->>Broker: Ack (discard)
+    else Match found
+        Mux->>Mux: Deserialize payload into target type
+        Mux->>Preflight: Run preflight chain (validation)
+        alt Preflight fails
+            Mux->>Broker: Nack
+        else Preflight OK
+            Mux->>MW: Run middleware chain
+            MW->>Handler: Execute handler (inline, same goroutine)
+            Handler-->>MW: result / error
 
-    Router->>Decoder: Deserializa según tipo
-    Decoder-->>Router: Instancia del objeto
-
-    Router->>Dispatcher: Encola Job
-
-    Dispatcher->>Worker: Asigna Job
-    Worker->>Handler: Ejecuta lógica
-    Handler-->>Worker: Resultado / error
-
-    Worker->>Publisher: (opcional) Publica salida
-    Worker->>Tempo: Envía trazas OTel
-    Worker->>Zap: Registra log estructurado
-    Worker->>Prom: Registra métricas
-
-    Worker-->>Dispatcher: Ack / Nack
+            alt NonRetryableError
+                Mux->>Broker: Ack (discard, won't fix on retry)
+            else Retryable error
+                Mux->>Broker: Nack (broker redelivers with backoff)
+            else Success
+                Mux->>Broker: Ack
+                opt Publisher configured
+                    Mux->>Pub: Publish result CloudEvent
+                end
+            end
+        end
+    end
 ```
 
-```mermaid
-flowchart TD
-    %% Definición de Estilos para Nodos y Subgrafos
-    classDef inicio fill:#D4EFDF,stroke:#27AE60,stroke-width:2px,color:#27AE60;
-    classDef decision fill:#FCF3CF,stroke:#F39C12,stroke-width:2px,color:#F39C12;
-    classDef proceso fill:#D6EAF8,stroke:#3498DB,stroke-width:2px,color:#3498DB;
-    classDef io fill:#EBDEF0,stroke:#8E44AD,stroke-width:2px,color:#8E44AD;
-    classDef resultadoOk fill:#A9DFBF,stroke:#229954,stroke-width:2px,color:#229954;
-    classDef resultadoErr fill:#F5B7B1,stroke:#C0392B,stroke-width:2px,color:#C0392B;
-    classDef worker fill:#EADCF5,stroke:#7D3C98,stroke-width:2px,color:#7D3C98;
-    classDef fin fill:#E5E7E9,stroke:#839192,stroke-width:2px,color:#839192;
+## Core Concepts
 
-    %% Para los subgrafos
-    style Router_Pipeline fill:#fcfcfc,stroke:#777,stroke-dasharray: 5 5
-    style Worker_Section fill:#f9f9f9,stroke:#555,stroke-dasharray: 3 3
+### Message
 
-    A(["Router.Run Inicia"]):::inicio --> B{"Msj Recibido?"}:::io;
+`event.Message` composes `cloudevents.Event` (CNCF v1.0.2) with delivery mechanics that CloudEvents doesn't cover:
 
-    subgraph Router_Pipeline ["Pipeline del Router"]
-        B --> C{"Iterar Rutas"}:::proceso;
-        C --> D{"Filtro OK?"}:::decision;
-        D -- No Coincide --> E["Sgte. Ruta"];
-        E --> C;
-        D -- Si / Sin Filtro --> F(["Deserializar Payload"]):::proceso;
-        F --> G{"Deserial. OK?"}:::decision;
-        G -- No --> H(["Nack Msj"]):::resultadoErr;
-        G -- Si --> J(["Crear Job"]):::proceso;
-        J --> K(["Enviar a JobQueue"]):::io;
-        
-        K -- Falla (Cola/Ctx) --> M(["Nack Msj"]):::resultadoErr;
-        H --> FIN_ROUTER_ERR["Fin (Router Nack)"]:::fin;
-        M --> FIN_ROUTER_ERR;
-    end
-    
-    K -- Éxito al Enviar --> L["Job para Worker"];
-
-    subgraph Worker_Section ["Procesamiento en Worker"]
-        L --> N(["Ejecutar Handler"]):::worker;
-        N --> O{"Handler OK?"}:::decision;
-        O -- Si --> P(["Ack Msj"]):::resultadoOk;
-        O -- No (Error/Cancel) --> Q(["Nack Msj"]):::resultadoErr;
-        P --> R{"Publicar Resultado?"}:::decision;
-        R -- Si --> S(["Publicar Msj"]):::io;
-        R -- No --> T(["Job Completado"]):::proceso;
-        Q --> T;
-        S --> T;
-    end
-    
-    T --> FIN_WORKER["Fin (Worker)"]:::fin;
-
-    C -.-> U{"Sin Rutas Coincidentes?"}:::decision;
-    U -- Si --> V(["Ack Msj (Evitar Reintentos)"]):::resultadoOk;
-    V --> FIN_SIN_RUTA["Fin (Ack sin Ruta)"]:::fin;
-    U -- No --> FIN_PROCESO_RUTAS["Fin Iteración Rutas"]:::fin;
+```go
+type Message struct {
+    cloudevents.Event           // Embedded: ID(), Type(), Source(), Data(), Extensions()...
+    // + Ack(), Nack()          // Delivery acknowledgment (once-only via sync.Once)
+    // + PreflightCallback      // Immediate validation result notification
+    // + Context()              // Per-message context, cancelled on Ack/Nack
+}
 ```
+
+### EventMux
+
+Stateless multiplexer. Handlers execute inline in the broker SDK's goroutine — no in-memory job queue, no second pool of workers. Concurrency is controlled by the transport (`NumGoroutines` for Pub/Sub, `ConsumeWorkers` for SQS, request goroutines for HTTP).
+
+```go
+mux := eventmux.New(eventmux.Config{
+    Name:            "orders",                // appears in logs
+    Subscription:    subscription,
+    Logger:          logger,                  // *slog.Logger; default: discard
+    ReportOnNoMatch: true,                    // surfaces ErrNoRoute via preflight callback
+})
+```
+
+### Transports
+
+Every transport package provides at least a `Publisher`, a `Subscriber`, or both. They satisfy `eventmux.Publisher` / `eventmux.Subscription` structurally — no need to import `eventmux` from inside the transport package.
+
+| Package | Publisher | Subscriber | Notes |
+|---|---|---|---|
+| `pkg/transport/gcp/pubsub` | `pubsub.Publisher` | `pubsub.Subscriber` | + `HealthChecker` for `/ready` probes |
+| `pkg/transport/aws/sns` | `sns.Publisher` | — | Pub-only (SNS is fanout) |
+| `pkg/transport/aws/sqs` | — | `sqs.Subscriber` | Long-polling, configurable workers |
+| `pkg/transport/eventhttp` | `eventhttp.Publisher` | `eventhttp.Subscriber` | Binary + structured + plain JSON |
+
+**AWS Identity helper** — instead of hardcoding region/account, `aws.Identity{Config: awsCfg}` derives them automatically (region from `awsCfg.Region`, account via `sts:GetCallerIdentity`, cached). Pass topic/queue names instead of full ARNs/URLs:
+
+```go
+awsCfg, _ := aws.NewConfig()
+identity := &aws.Identity{Config: awsCfg}
+
+pub, _ := sns.NewPublisher(snsClient, sns.PublisherConfig{
+    Topic:    "orders",        // → arn:aws:sns:<region>:<account>:orders
+    Identity: identity,
+}, logger)
+
+sub, _ := sqs.NewSubscriber(sqsClient, sqs.SubscriberConfig{
+    Queue:    "orders",        // → https://sqs.<region>.amazonaws.com/<account>/orders
+    Identity: identity,        // STS lookup is cached and shared with SNS
+}, logger)
+```
+
+ARNs / URLs already qualified are accepted unchanged — the resolver detects the prefix (`arn:` for SNS, `https://` for SQS) and skips STS entirely.
+
+### Marshaler / Unmarshaler
+
+Each transport exposes pluggable wire-format mapping:
+
+| Transport | Default behavior |
+|---|---|
+| `pubsub.DefaultMarshaler` / `DefaultUnmarshaler` | Binary mode (`ce-*` attributes). Unmarshaler auto-detects `Content-Type: application/cloudevents+json` for structured mode. |
+| `sns.DefaultMarshaler` | CE attrs → `MessageAttributes` (String). |
+| `sqs.DefaultUnmarshaler` | Reads `ce-*` from `MessageAttributes`. Assumes `RawMessageDelivery=true` for SNS→SQS fan-out. |
+| `eventhttp` | Uses the official CloudEvents SDK (`cehttp.NewEventFromHTTPRequest`); not pluggable here. |
+
+Swap to support FIFO (`MessageGroupId`/`MessageDeduplicationId`), structured-mode publishing, legacy formats, encryption, compression, etc.
+
+### Filters
+
+Two filter families, composable:
+
+```go
+// CloudEvent attribute filters (no payload parsing)
+cefilter.ByType("com.example.order.created", "com.example.order.updated")
+cefilter.BySource("//pubsub.googleapis.com/")
+
+// Payload-level filter (JMESPath on JSON body)
+jmespath.New("contains(['premium', 'enterprise'], plan)", logger)
+
+// Combined (AND)
+cefilter.All(
+    cefilter.ByType("com.example.order.created"),
+    jmespath.New("total > `1000`", logger),
+)
+```
+
+Route matching is **first-match-wins** — register routes from most specific to least specific.
+
+### Middleware
+
+```go
+import (
+    "github.com/norlis/event-driven/pkg/middleware/recover"
+    "github.com/norlis/event-driven/pkg/middleware/validate"
+    "github.com/norlis/event-driven/pkg/middleware/retry"
+    "github.com/norlis/event-driven/pkg/middleware/skiperr"
+)
+
+mux.Use(recover.Middleware)                               // recover panics
+mux.UsePreflight(validate.New(logger))                    // go-playground/validator before handler
+mux.Use(retry.HTTPBackoff(200*time.Millisecond, 2*time.Second, 3))
+mux.Use(
+    skiperr.New(logger,
+        skiperr.ByErr("not-found", ErrDataNotFound),
+        skiperr.ByType[validator.ValidationErrors]("validator"),
+    ).Middleware,
+)
+```
+
+`Use` chains the handler middleware. `UsePreflight` runs before the handler against a no-op terminal — used to surface validation/authorization failures without invoking the user handler.
+
+### Error Handling
+
+```go
+// Retryable → Nack → broker redelivers with its own backoff/DLQ policy
+return nil, fmt.Errorf("database timeout: %w", err)
+
+// Non-retryable → Ack (discard) → retrying won't fix it
+return nil, event.NewNonRetryableError(validationErr)
+```
+
+For Pub/Sub, configure retry policy and Dead Letter Queue natively in GCP:
+
+```bash
+gcloud pubsub subscriptions update my-sub \
+  --min-retry-delay=1s --max-retry-delay=60s \
+  --dead-letter-topic=my-dlq-topic --max-delivery-attempts=5
+```
+
+For SQS, configure `VisibilityTimeout` and `RedrivePolicy` on the queue. The `sqs.Subscriber` leaves nacked messages untouched so the visibility timeout drives redelivery.
+
+### HTTP Content Modes
+
+The HTTP subscriber accepts CloudEvents in three modes:
+
+| Mode | Content-Type | Attributes | Data |
+|---|---|---|---|
+| Binary | `application/json` | `Ce-*` headers | HTTP body |
+| Structured | `application/cloudevents+json` | Inside JSON body | `data` field in JSON |
+| Fallback | `application/json` | Auto-generated defaults | HTTP body |
+
+### eventmux.Wrap
+
+Type-safe generic wrapper that converts `func(ctx, T) → (json.RawMessage, error)` into `HandlerFunc`:
+
+```go
+func Execute(ctx context.Context, order Order) (json.RawMessage, error) { ... }
+
+mux.Register(pub, filter, Order{}, eventmux.Wrap(handler.Execute))
+```
+
+Uses `reflect.TypeFor[T]()` for accurate error messages on type mismatch.
+
+## Logging (slog)
+
+The library uses `log/slog` exclusively. Construct a logger however you want and pass it in:
+
+```go
+import "log/slog"
+import "os"
+
+logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+```
+
+Nil loggers are accepted and default to `slog.DiscardHandler`. The library does **not** ship a logger factory — `slog.New(...)` is one line.
+
+## FX Integration
+
+`pkg/kit/fxmux` provides:
+
+- **`fxmux.Bind(lc, mux, logger, shutdowner)`** — hooks `mux.RunBackground` to `fx.Lifecycle.OnStart` and triggers `fx.Shutdowner` on fatal mux errors.
+- **`fxmux.NewLogger(*slog.Logger) fxevent.Logger`** — pipes FX events to slog. Only Started / Stopping / errors get logged; the verbose Provide/Invoke/Hook chatter is silenced.
+
+```go
+fx.New(
+    fx.WithLogger(fxmux.NewLogger),
+    fx.Provide(NewLogger, NewMux, NewSubscription, ...),
+    fx.Invoke(RegisterEventHandlers),
+)
+```
+
+See `example/cmd/main.go` for a complete wiring.
 
 ## Versioning
 
-```shell
-VERSION=v0.1.1
+```bash
+VERSION=v0.3.0
 git tag "${VERSION}" && git push origin "${VERSION}"
 ```
 
-## Consideraciones de rendimiento 
-https://medium.com/smsjunk/handling-1-million-requests-per-minute-with-golang-f70ac505fcaa
+## Concurrency Tuning
 
-- Pub/Sub `MaxOutstandingMessages` (`Dispatcher QueueSize + Dispatcher NumWorkers`) y `NumGoroutines` (en `SubscriberConfig` de `messaging.NewSubscription`):
-  - `MaxOutstandingMessages`: El número máximo de mensajes que la librería cliente de Pub/Sub mantendrá en memoria sin haberles hecho ACK/NACK. Si tu `JobQueue` se llena, y el `Router` Nackea mensajes, estos volverán a contar contra este límite eventualmente.
-  - `NumGoroutines` (en `ReceiveSettings` del cliente Pub/Sub, que messaging.NewSubscription debería usar): Controla cuántas goroutines usa la librería cliente para recibir mensajes y llamar a tu callback (el que tienes en Router.Run). Un valor demasiado bajo aquí será un cuello de botella antes de que los mensajes lleguen a tu `JobQueue`.
+Since EventMux is stateless, concurrency is controlled by the transport:
 
-- Dispatcher `NumWorkers` y `QueueSize` (en `DispatcherConfig`):
-  - `NumWorkers`: Tu capacidad de procesamiento real.
-  - `QueueSize`: Un buffer para absorber picos de mensajes.
+| Transport | Knob | Controls |
+|---|---|---|
+| GCP Pub/Sub | `NumGoroutines` | Concurrent receive goroutines (SDK) |
+| GCP Pub/Sub | `MaxOutstandingMessages` | Max in-flight messages |
+| GCP Pub/Sub | `MaxExtension` | How long the SDK extends the ack deadline |
+| AWS SQS | `ConsumeWorkers` | Parallel polling goroutines |
+| AWS SQS | `WaitTimeSeconds` (in `GenerateReceiveMessageInput`) | Long-polling window (max 20s) |
+| AWS SQS | Queue `VisibilityTimeout` | How long a message is hidden after receive |
+| HTTP | — | One goroutine per HTTP request (Go runtime) |
 
-## OPA server
+## Example
 
-```shell
-opa run --server policy.rego
-
-```
-
-
-## Guía Rápida de Arquitectura: ¿Dónde va mi código?
-
-### `domain` (_El Corazón️_):
-- ¿Qué es? La lógica pura de tu negocio.
-
-- ¿Qué pongo? Entidades (Order, User), reglas de negocio (order.AddItem()) y eventos de dominio (OrderCreated).
-
-> Regla clave: No depende de NADA. Cero librerías externas.
-
-### `application` (_El Cerebro_):
-- ¿Qué es? El orquestador que dirige a la lógica de negocio.
-
-- ¿Qué pongo? Los casos de uso (handlers), el Router que decide qué handler llamar y el Worker que procesa en segundo plano.
-
-> Regla clave: Usa el domain para hacer el trabajo y llama a las interfaces de port para hablar con el exterior.
-
-### `port` (_El Contrato_):
-- ¿Qué es? Las "interfaces" de Go. Define qué necesita la aplicación del mundo exterior, pero no el cómo.
-
-- ¿Qué pongo? Solo interface { ... }. (Ej: Publisher, Subscription).
-
-> Regla clave: Es el enchufe. No tiene código de implementación.
-
-### `adapter` (*El Traductor*):
-- ¿Qué es? El código que conecta tu aplicación con el mundo real (HTTP, Pub/Sub, bases de datos).
-
-- ¿Qué pongo? La implementación de las interfaces de port. (Ej: GcpPubSubPublisher, HttpSubscriber).
-
-> Regla clave: Es el cable que se conecta al enchufe (port). Aquí viven las librerías externas.
-
-### `kit` (_La Caja de Herramientas️_):
-¿Qué es? Utilidades que ayudan a toda la aplicación.
-
-¿Qué pongo? logger y otelsetup (tracing).
-
-> Regla clave: Es código de soporte, no es lógica de negocio ni un adaptador
-
-
-### Resumen
-
-```mermaid
-graph TD
-    subgraph Layers
-        direction LR
-        A(adapter) --> B(port);
-        B -- uses --> C(application);
-        C -- uses --> D(domain);
-        E(kit) -- "usado por todos" --> A;
-        E -- "usado por todos" --> C;
-    end
-
-    style D fill:#D4EFDF,stroke:#27AE60,stroke-width:2px,color:#1B5E20
-    style C fill:#D6EAF8,stroke:#3498DB,stroke-width:2px,color:#1A5276
-    style B fill:#FCF3CF,stroke:#F39C12,stroke-width:2px,color:#7D6608
-    style A fill:#EBDEF0,stroke:#8E44AD,stroke-width:2px,color:#512E5F
-    style E fill:#E5E7E9,stroke:#839192,stroke-width:2px,color:#2C3E50
-```
-
-| Directorio    | Propósito Principal                        | ¿Qué Pongo Aquí?                                                                 | Ejemplo Concreto                                                                           |
-|---------------|--------------------------------------------|----------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| `domain`      | El Corazón del Negocio                     | Entidades, Eventos de Dominio, Lógica de Negocio pura.                          | `struct Order`, `func (o *Order) AddItem(...)`                                             |
-| `application` | El Orquestador de Casos de Uso             | Lógica de aplicación que coordina el flujo. `Router`, `Worker`, `Handlers`.     | `OrderHandler` que llama al repositorio y al publicador.                                  |
-| `port`        | El Contrato con el Exterior                | Interfaces de Go (`type MyInterface interface { ... }`).                        | `type Publisher interface { ... }`                                                         |
-| `adapter`     | La Implementación del Mundo Real           | Código que implementa los puertos usando tecnología concreta (HTTP, Pub/Sub, SQL). | `GcpPubSubPublisher`, `HttpSubscriber` que maneja `http.Request`.                         |
-| `kit`         | La Caja de Herramientas                    | Utilidades transversales y de soporte.                                           | `logger/New()`, `otelsetup/InitTracerProvider()`                                          |
+A full end-to-end example lives under `example/` showing four cross-transport scenarios (HTTP↔Pub/Sub round-trip, JMESPath filtering, validation preflight). See [`example/README.md`](example/README.md) for the env vars and `example/test.http` for ready-to-fire requests.

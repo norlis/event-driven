@@ -1,0 +1,85 @@
+package eventmux
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"testing"
+)
+
+type MyData struct {
+	ID string
+}
+
+func mySpecificHandler(_ context.Context, data MyData) (json.RawMessage, error) {
+	if data.ID == "error" {
+		return nil, errors.New("handler error")
+	}
+	return []byte("processed: " + data.ID), nil
+}
+
+func TestWrap(t *testing.T) {
+	t.Parallel()
+
+	wrapped := Wrap(mySpecificHandler)
+
+	tests := []struct {
+		name           string
+		input          any
+		expectedOut    json.RawMessage
+		expectErr      bool
+		expectedErrMsg string
+	}{
+		{
+			name:        "Correct type, no error",
+			input:       MyData{ID: "123"},
+			expectedOut: []byte("processed: 123"),
+			expectErr:   false,
+		},
+		{
+			name:           "Correct type, handler returns error",
+			input:          MyData{ID: "error"},
+			expectedOut:    nil,
+			expectErr:      true,
+			expectedErrMsg: "handler error",
+		},
+		{
+			name:        "Incorrect type",
+			input:       "not MyData",
+			expectedOut: nil,
+			expectErr:   true,
+			// reflect.TypeFor[T]() prints the full type name
+			expectedErrMsg: fmt.Sprintf("handler: expected eventmux.MyData but got %T", "not MyData"),
+		},
+		{
+			name:           "Nil input, incorrect type",
+			input:          nil,
+			expectedOut:    nil,
+			expectErr:      true,
+			expectedErrMsg: "handler: expected eventmux.MyData but got <nil>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := wrapped(context.Background(), tt.input)
+
+			if (err != nil) != tt.expectErr {
+				t.Fatalf("Wrap() error = %v, expectErr %v", err, tt.expectErr)
+			}
+
+			if tt.expectErr && err != nil {
+				if err.Error() != tt.expectedErrMsg {
+					t.Errorf("Wrap() error message = %q, want %q", err.Error(), tt.expectedErrMsg)
+				}
+			}
+
+			if !tt.expectErr && !bytes.Equal(out, tt.expectedOut) {
+				t.Errorf("Wrap() out = %v, want %v", out, tt.expectedOut)
+			}
+		})
+	}
+}

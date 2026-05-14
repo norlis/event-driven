@@ -1,9 +1,0 @@
-## ## Ccommand 1
-POST http://localhost:8880/command
-Content-Type: application/json
-
-{
-  "name": "test",
-  "age": 1
-}
-
