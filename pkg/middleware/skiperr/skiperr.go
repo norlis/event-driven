@@ -1,3 +1,6 @@
+// Package skiperr provides an eventmux middleware that swallows handler
+// errors matching user-supplied predicates. Useful to treat specific
+// domain errors as Ack-and-discard (e.g. validation, not-found).
 package skiperr
 
 import (
@@ -10,11 +13,15 @@ import (
 	"github.com/norlis/event-driven/pkg/eventmux"
 )
 
+// Predicate decides whether a handler error should be swallowed. Description
+// is logged when the predicate fires.
 type Predicate struct {
 	Description string
 	Matches     func(err error) bool
 }
 
+// Skipper is the middleware factory: New(...).Middleware satisfies
+// eventmux.Middleware.
 type Skipper struct {
 	predicates []Predicate
 	logger     *slog.Logger

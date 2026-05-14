@@ -1,3 +1,5 @@
+// Package recover provides an eventmux middleware that recovers from panics
+// inside the handler chain and surfaces them as a PanicError.
 package recover
 
 import (

@@ -27,10 +27,14 @@ type Message struct {
 	preflightCallback PreflightCallback
 }
 
+// NewMessageWithoutAck wraps a CloudEvent without Ack/Nack semantics. Use
+// from synchronous transports (e.g. HTTP) where ack/nack don't apply.
 func NewMessageWithoutAck(ce cloudevents.Event) *Message {
 	return NewMessage(ce, noop, noop)
 }
 
+// NewMessage wraps a CloudEvent with broker-level ack and nack callbacks.
+// The callbacks are de-duplicated: only the first Ack or Nack fires.
 func NewMessage(ce cloudevents.Event, ackFn, nackFn func()) *Message {
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in Message and called in Ack/Nack
 	return &Message{
@@ -54,6 +58,7 @@ func (m *Message) NotifyPreflightDone(err error) {
 	}
 }
 
+// Context returns the per-message context cancelled when Ack or Nack fires.
 func (m *Message) Context() context.Context {
 	return m.ctx
 }

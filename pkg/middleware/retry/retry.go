@@ -1,3 +1,6 @@
+// Package retry provides eventmux middlewares that re-invoke the handler on
+// transient failures with exponential backoff. Non-retryable errors
+// (event.NonRetryableError) short-circuit the loop.
 package retry
 
 import (
@@ -14,7 +17,7 @@ import (
 // HTTPBackoff retries the handler up to maxRetries times with exponential backoff
 // and jitter. Designed for HTTP subscribers where the client is waiting for a response.
 //
-// Non-retryable errors (domain.NonRetryable) break the retry loop immediately.
+// Non-retryable errors (event.NonRetryableError) break the retry loop immediately.
 // The jitter prevents thundering herd when many requests fail simultaneously.
 func HTTPBackoff(baseDelay, maxDelay time.Duration, maxRetries int) eventmux.Middleware {
 	return func(next eventmux.HandlerFunc) eventmux.HandlerFunc {
@@ -29,7 +32,7 @@ func HTTPBackoff(baseDelay, maxDelay time.Duration, maxRetries int) eventmux.Mid
 				lastErr = err
 
 				// Non-retryable error → stop immediately (e.g. validation, bad payload).
-				if _, ok := errors.AsType[*event.NonRetryable](err); ok {
+				if _, ok := errors.AsType[*event.NonRetryableError](err); ok {
 					return nil, err
 				}
 

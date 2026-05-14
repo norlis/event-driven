@@ -3,7 +3,7 @@ version: "2"
 
 run:
   timeout: 5m
-  go: "1.25"
+  go: "1.26"
   modules-download-mode: readonly
   allow-parallel-runners: true
   tests: true
@@ -23,8 +23,17 @@ formatters:
       sections:
         - standard
         - default
+        - prefix(github.com/norlis)
+        - localmodule
       skip-generated: true
       custom-order: true
+
+    gofmt:
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+        - pattern: "a[b:len(a)]"
+          replacement: "a[b:]"
 
     gofumpt:
       extra-rules: true
@@ -46,6 +55,7 @@ linters:
     - gosec          # Seguridad (G101-G604)
     - errchkjson     # JSON encoding errors
     - errorlint      # Error wrapping Go 1.13+
+    - bidichk        # Caracteres Unicode bidi (CVE-2021-42574)
 
     # === Estilo ===
     - misspell       # Errores ortográficos
@@ -68,14 +78,17 @@ linters:
     - nilerr         # Return nil error incorrectamente
     - nilnil         # Return nil,nil simultáneo
     - nolintlint     # Valida directivas //nolint
+    - errname        # Convención de naming para errors (XxxError / ErrXxx)
+    - makezero       # make([]T, N) + append → bug (N ceros + el append)
 
     # === Testing ===
     - testifylint    # Mejores prácticas testify
     - tparallel      # t.Parallel() mal usado
     - paralleltest   # Detecta tests que deberían usar t.Parallel()
+    - usetesting     # Modernización de APIs (t.Setenv, t.Context, etc.)
 
     # === Moderno y mejores prácticas (Go 1.22+) ===
-    #    - revive         # Linter configurable
+    - revive         # Linter configurable
     - gocritic       # Más de 100 checkers
     - perfsprint     # Optimizaciones de sprintf
     - copyloopvar    # Go 1.22+ loop var behavior
@@ -93,11 +106,39 @@ linters:
     # === Go modules y dependencias ===
     - gomoddirectives # Valida go.mod
     - depguard       # Control de imports
+    - importas       # Enforce alias consistente entre paquetes
 
     # === future
     - modernize
 
   settings:
+    # Staticcheck: habilitar todas las reglas (SA, S, ST, QF)
+    staticcheck:
+      checks:
+        - all
+
+    # Importas: alias canónicos para SDKs externos
+    importas:
+      no-unaliased: true       # error si el paquete está sin alias en algún archivo
+      no-extra-aliases: false  # permitir aliases adicionales no listados
+      alias:
+        - pkg: cloud.google.com/go/pubsub/v2
+          alias: gpubsub
+        - pkg: github.com/aws/aws-sdk-go-v2/aws
+          alias: awssdk
+        - pkg: github.com/aws/aws-sdk-go-v2/service/sns
+          alias: awssns
+        - pkg: github.com/aws/aws-sdk-go-v2/service/sns/types
+          alias: snstypes
+        - pkg: github.com/aws/aws-sdk-go-v2/service/sqs
+          alias: awssqs
+        - pkg: github.com/aws/aws-sdk-go-v2/service/sqs/types
+          alias: sqstypes
+        - pkg: github.com/aws/aws-sdk-go-v2/service/sts
+          alias: awssts
+        - pkg: github.com/cloudevents/sdk-go/v2/event
+          alias: cloudevents
+
     # Complejidad ciclomática
     gocyclo:
       min-complexity: 15
@@ -163,7 +204,7 @@ linters:
         - diagnostic
         - style
         - performance
-        - experimental
+#        - experimental
       disabled-checks:
         - whyNoLint
         - hugeParam
@@ -207,9 +248,14 @@ linters:
       sort: true
 
   exclusions:
+    # Presets oficiales para silenciar falsos positivos conocidos
+    presets:
+      - common-false-positives
+      - std-error-handling
+
     # Excluir directorios completos de todos los linters
     paths:
-      - cmd/example
+      - example/cmd
 
     rules:
       # Excluir tests de algunos linters

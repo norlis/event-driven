@@ -1,3 +1,6 @@
+// Package pubsub provides a Google Cloud Pub/Sub transport for eventmux:
+// a Subscriber that polls a subscription, a Publisher that sends to a topic,
+// and a HealthChecker that verifies existence of topics + subscriptions.
 package pubsub
 
 import (
@@ -12,21 +15,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// HealthCheckerOption configures the HealthChecker. Use WithTopics /
+// WithSubscriptions to declare which resources should be verified.
 type HealthCheckerOption func(*HealthChecker)
 
+// WithTopics adds topic IDs whose existence should be checked.
 func WithTopics(topics ...string) HealthCheckerOption {
 	return func(c *HealthChecker) {
 		c.topics = append(c.topics, topics...)
 	}
 }
 
-// WithSubscriptions es una opción para añadir suscripciones que deben ser verificadas.
+// WithSubscriptions adds subscription IDs whose existence should be checked.
 func WithSubscriptions(subscriptions ...string) HealthCheckerOption {
 	return func(c *HealthChecker) {
 		c.subscriptions = append(c.subscriptions, subscriptions...)
 	}
 }
 
+// HealthChecker verifies that the configured Pub/Sub topics and subscriptions
+// exist. Suitable for plug-in to a /ready probe.
 type HealthChecker struct {
 	client        *gpubsub.Client
 	projectID     string
@@ -34,6 +42,9 @@ type HealthChecker struct {
 	subscriptions []string
 }
 
+// Check performs a GetTopic + GetSubscription call for each registered
+// resource and aggregates the results. Returns a wrapped multi-error when
+// any resource is missing or unreachable.
 func (p *HealthChecker) Check() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -86,6 +97,9 @@ func (p *HealthChecker) Check() error {
 	return nil
 }
 
+// NewHealthChecker returns a HealthChecker bound to the given client and
+// project ID. Use WithTopics / WithSubscriptions to populate the resources
+// to verify.
 func NewHealthChecker(client *gpubsub.Client, projectID string, opts ...HealthCheckerOption) *HealthChecker {
 	checker := &HealthChecker{
 		client:        client,

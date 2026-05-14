@@ -15,6 +15,8 @@ import (
 // caching and renewal internally. Called before each Publish.
 type TokenFunc func(ctx context.Context) (string, error)
 
+// PublisherConfig configures a Publisher. TargetURL is required; everything
+// else has sensible defaults.
 type PublisherConfig struct {
 	TargetURL string
 	Timeout   time.Duration
@@ -41,6 +43,8 @@ type Publisher struct {
 	tokenHeader string
 }
 
+// NewPublisher returns a Publisher with sensible defaults: 10s timeout and
+// "Authorization" as the token header.
 func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
 	timeout := cfg.Timeout
 	if timeout == 0 {
@@ -58,6 +62,7 @@ func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
 	}
 }
 
+// Publish sends ce to TargetURL using CloudEvents binary content mode.
 func (p *Publisher) Publish(ce cloudevents.Event) error {
 	ctx := context.Background()
 

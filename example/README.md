@@ -32,8 +32,8 @@ The library provides two publisher implementations; both satisfy
 
 | Publisher | Package | Target | Use case |
 |---|---|---|---|
-| `pubsub.Publisher` | `pkg/provider/gcp/pubsub` | Google Cloud Pub/Sub topic | Async event pipelines |
-| `eventhttp.Publisher` | `pkg/provider/eventhttp` | Any HTTP endpoint | Webhooks, external APIs |
+| `pubsub.Publisher` | `pkg/transport/gcp/pubsub` | Google Cloud Pub/Sub topic | Async event pipelines |
+| `eventhttp.Publisher` | `pkg/transport/eventhttp` | Any HTTP endpoint | Webhooks, external APIs |
 
 ### `eventhttp.Publisher`
 
@@ -59,7 +59,7 @@ pub := pubsub.NewPublisher(client, pubsub.PublisherConfig{
 
 ## HTTP Content Modes
 
-The HTTP subscriber (`pkg/provider/eventhttp`) accepts CloudEvents in three ways:
+The HTTP subscriber (`pkg/transport/eventhttp`) accepts CloudEvents in three ways:
 
 ### Binary content mode
 

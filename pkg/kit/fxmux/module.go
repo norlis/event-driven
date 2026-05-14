@@ -5,8 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/norlis/event-driven/pkg/eventmux"
 	"go.uber.org/fx"
+
+	"github.com/norlis/event-driven/pkg/eventmux"
 )
 
 const defaultStopTimeout = 30 * time.Second

@@ -11,17 +11,23 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/google/uuid"
+
+	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
+
 	"github.com/norlis/event-driven/pkg/event"
 	"github.com/norlis/event-driven/pkg/eventmux"
-	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
 )
 
+// SubscriberConfig configures the HTTP subscriber. Pattern is the
+// http.ServeMux pattern (e.g. "POST /command") the subscriber registers.
 type SubscriberConfig struct {
 	Pattern    string
 	Logger     *slog.Logger
 	Middleware middleware.Middleware
 }
 
+// Subscriber turns incoming HTTP requests into CloudEvents and forwards them
+// to the eventmux handler. It satisfies eventmux.Subscription.
 type Subscriber struct {
 	server         *http.ServeMux
 	config         SubscriberConfig
@@ -29,6 +35,7 @@ type Subscriber struct {
 	errorResponder *ErrorResponder
 }
 
+// NewSubscriber registers the HTTP handler under cfg.Pattern.
 func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (eventmux.Subscription, error) {
 	return &Subscriber{
 		server:         server,
@@ -38,6 +45,8 @@ func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (eventmux.Subscr
 	}, nil
 }
 
+// Handler builds the http.HandlerFunc bound to handler. Exposed so callers
+// can wrap it with their own middlewares before registering on the ServeMux.
 func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ce, err := h.extractCloudEvent(r)
@@ -129,8 +138,14 @@ func (h *Subscriber) extractCloudEvent(r *http.Request) (*cloudevents.Event, err
 	return &ce, nil
 }
 
+// Start registers the HTTP handler under the configured pattern and blocks
+// until ctx is cancelled. Blocking matches the contract of other transports
+// (Pub/Sub, NATS) and lets the parent Mux treat HTTP routes as long-lived
+// instead of reporting them as "stopped" immediately after Start returns.
 func (h *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)) error {
-	h.config.Logger.Info("Subscriber Start")
+	h.config.Logger.Info("Subscriber Start", slog.String("pattern", h.config.Pattern))
 	h.server.HandleFunc(h.config.Pattern, h.Handler(handler))
+	<-ctx.Done()
+	h.config.Logger.Info("Subscriber stopped", slog.String("pattern", h.config.Pattern))
 	return nil
 }

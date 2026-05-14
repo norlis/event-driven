@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// Response is the JSON envelope returned by the HTTP subscriber. Build it
+// via ResponseBuilder to ensure required fields are populated.
 type Response struct {
 	ID        string `json:"id"`
 	Name      string `json:"name,omitempty"`
@@ -20,6 +22,7 @@ type Response struct {
 	Status int    `json:"status"`           //  the HTTP response code (optional) https://go.dev/src/net/http/status.go
 }
 
+// JSON writes the Response as JSON. If Status is unset it defaults to 202.
 func (res *Response) JSON(w http.ResponseWriter, r *http.Request) {
 	if res.Status == 0 {
 		res.Status = http.StatusAccepted
@@ -32,10 +35,12 @@ func (res *Response) JSON(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ResponseBuilder builds a Response with sensible defaults using a fluent API.
 type ResponseBuilder struct {
 	response *Response
 }
 
+// NewResponseBuilder returns a builder pre-filled with the current Unix timestamp.
 func NewResponseBuilder() *ResponseBuilder {
 	return &ResponseBuilder{
 		response: &Response{
@@ -44,6 +49,7 @@ func NewResponseBuilder() *ResponseBuilder {
 	}
 }
 
+// WithID populates the three correlation identifiers.
 func (b *ResponseBuilder) WithID(msgID, reqID, sessionID string) *ResponseBuilder {
 	b.response.ID = msgID
 	b.response.RequestID = reqID
@@ -51,28 +57,33 @@ func (b *ResponseBuilder) WithID(msgID, reqID, sessionID string) *ResponseBuilde
 	return b
 }
 
+// WithName sets the response Name and Instance URI.
 func (b *ResponseBuilder) WithName(name, instance string) *ResponseBuilder {
 	b.response.Name = name
 	b.response.Instance = instance
 	return b
 }
 
+// WithError populates the error fields (detail + code).
 func (b *ResponseBuilder) WithError(detail, code string) *ResponseBuilder {
 	b.response.Detail = detail
 	b.response.Code = code
 	return b
 }
 
+// WithStatus sets the HTTP status code.
 func (b *ResponseBuilder) WithStatus(status int) *ResponseBuilder {
 	b.response.Status = status
 	return b
 }
 
+// WithInstance sets the Instance URI in isolation (without overwriting Name).
 func (b *ResponseBuilder) WithInstance(instance string) *ResponseBuilder {
 	b.response.Instance = instance
 	return b
 }
 
+// Build returns the assembled Response.
 func (b *ResponseBuilder) Build() *Response {
 	return b.response
 }

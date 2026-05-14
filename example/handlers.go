@@ -10,11 +10,14 @@ import (
 	"github.com/norlis/event-driven/pkg/eventmux/metadata"
 )
 
+// Person is the demo domain object the handlers receive.
 type Person struct {
 	Name string `json:"name" validate:"required"`
 	Age  int    `json:"age"  validate:"required"`
 }
 
+// Sentinel errors raised by the demo handlers; used as inputs to the skiperr
+// middleware so we can showcase ignoring specific failures without nacking.
 var (
 	ErrInvalidObject = errors.New("invalid object")
 	ErrDataNotFound  = errors.New("data not found but not critical")
@@ -31,6 +34,7 @@ type handler struct {
 	logger *slog.Logger
 }
 
+// NewHandler builds the demo UseCase implementation.
 func NewHandler(logger *slog.Logger) UseCase {
 	return &handler{logger: logger}
 }

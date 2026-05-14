@@ -4,15 +4,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 
 	sdkpubsub "cloud.google.com/go/pubsub/v2"
 	"github.com/norlis/event-driven/example"
-	"github.com/norlis/event-driven/pkg/provider/gcp/pubsub"
+	"github.com/norlis/event-driven/pkg/kit/fxmux"
+	"github.com/norlis/event-driven/pkg/transport/gcp/pubsub"
 	"github.com/norlis/httpgate/pkg/application/health"
 	httpgateport "github.com/norlis/httpgate/pkg/port"
 	"go.uber.org/fx"
-	"go.uber.org/fx/fxevent"
 )
 
 var GitHash string
@@ -28,18 +27,16 @@ func main() {
 	fmt.Print(banner)
 
 	app := fx.New(
-		fx.WithLogger(func() fxevent.Logger {
-			return &fxevent.ConsoleLogger{W: os.Stderr}
-		}),
+		fx.WithLogger(fxmux.NewLogger),
 
 		fx.Provide(example.NewLogger),
-		fx.Provide(example.NewHttpServerMux),
+		fx.Provide(example.NewHTTPServerMux),
 		fx.Provide(example.NewPubSubClient),
 		fx.Provide(example.NewHandler),
 		fx.Provide(example.NewEventPublisher),
-		fx.Provide(fx.Annotate(example.NewHttpSubscriber, fx.ResultTags(`name:"HttpSubscription"`))),
+		fx.Provide(fx.Annotate(example.NewHTTPSubscriber, fx.ResultTags(`name:"HTTPSubscription"`))),
 		fx.Provide(fx.Annotate(example.NewAppSubscription, fx.ResultTags(`name:"AppSubscription"`))),
-		fx.Provide(fx.Annotate(example.NewHttpMux, fx.ResultTags(`name:"HttpMux"`))),
+		fx.Provide(fx.Annotate(example.NewHTTPMux, fx.ResultTags(`name:"HTTPMux"`))),
 		fx.Provide(fx.Annotate(example.NewPrincipalMux, fx.ResultTags(`name:"PrincipalMux"`))),
 
 		fx.Provide(func() *health.Status { return health.NewStatus(GitHash) }),

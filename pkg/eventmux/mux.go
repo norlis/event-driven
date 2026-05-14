@@ -11,14 +11,21 @@ import (
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	"github.com/google/uuid"
+
 	"github.com/norlis/event-driven/pkg/event"
 	"github.com/norlis/event-driven/pkg/eventmux/metadata"
 )
 
 var noopHandler = func(ctx context.Context, data any) (json.RawMessage, error) { return nil, nil }
 
+// HandlerFunc is the user-supplied processor for a route. data is the decoded
+// payload (always of the type registered via Register). The optional
+// json.RawMessage return becomes the body of the result event published when
+// the Route has a Publisher attached.
 type HandlerFunc func(ctx context.Context, data any) (json.RawMessage, error)
 
+// Route binds a Filter, a typed Handler and an optional result Publisher.
+// ObjectType drives the JSON decoding of the incoming event payload.
 type Route struct {
 	Pub        Publisher
 	Filter     Filter
@@ -37,6 +44,10 @@ type Config struct {
 // OnErrorFunc is called when RunBackground detects a fatal (non-cancellation) error.
 type OnErrorFunc func(err error)
 
+// Mux is the event router. It pulls messages from a Subscription, decodes
+// them, dispatches to the first Route whose Filter matches, runs the handler
+// through the registered middleware chain, and (optionally) republishes the
+// result.
 type Mux struct {
 	cfg                  Config
 	routes               []*Route
@@ -193,9 +204,9 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 			slog.String("id", msg.ID()),
 		)
 
-		// NonRetryable → Ack (discard). Retrying won't fix it (e.g. validation, bad payload).
+		// NonRetryableError → Ack (discard). Retrying won't fix it (e.g. validation, bad payload).
 		// Retryable error → Nack. The broker will redeliver with its own backoff/DLQ policy.
-		if _, ok := errors.AsType[*event.NonRetryable](err); ok {
+		if _, ok := errors.AsType[*event.NonRetryableError](err); ok {
 			mux.cfg.Logger.Warn("Non-retryable error, discarding message",
 				slog.Any("error", err),
 				slog.String("id", msg.ID()),
@@ -241,10 +252,15 @@ func (mux *Mux) publishResult(msg *event.Message, data json.RawMessage, store *m
 	}
 }
 
+// Use registers middlewares that wrap every route's handler. They are applied
+// in reverse order so the last Use() added is the outermost middleware.
 func (mux *Mux) Use(middlewares ...Middleware) {
 	mux.middlewares = append(mux.middlewares, middlewares...)
 }
 
+// UsePreflight registers middlewares run before the handler with a no-op
+// terminal handler. Used to short-circuit on validation / authorization
+// failures while still allowing the message to be Nacked.
 func (mux *Mux) UsePreflight(middlewares ...Middleware) {
 	mux.preflightMiddlewares = append(mux.preflightMiddlewares, middlewares...)
 }

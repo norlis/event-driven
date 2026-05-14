@@ -1,3 +1,5 @@
+// Package cefilter provides filters keyed on CloudEvent context attributes
+// (type, source) and a logical-AND composer.
 package cefilter
 
 import (

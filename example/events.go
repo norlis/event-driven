@@ -1,3 +1,5 @@
+// Package example wires the eventmux library against GCP Pub/Sub + HTTP
+// using uber/fx and demonstrates four cross-transport routing scenarios.
 package example
 
 import (
@@ -7,7 +9,7 @@ import (
 	"github.com/norlis/event-driven/pkg/eventmux"
 	"github.com/norlis/event-driven/pkg/filter/cefilter"
 	"github.com/norlis/event-driven/pkg/filter/jmespath"
-	"github.com/norlis/event-driven/pkg/provider/eventhttp"
+	"github.com/norlis/event-driven/pkg/transport/eventhttp"
 )
 
 // RegisterEventHandlers wires routes onto both muxes. The four scenarios
@@ -23,12 +25,12 @@ func RegisterEventHandlers(params EventParams, routers RouterParams, logger *slo
 		Timeout:   5 * time.Second,
 	}, logger.With(slog.String("logger", "webhook-publisher")))
 
-	// ── HttpMux (HTTP → handler) ────────────────────────────────────────
+	// ── HTTPMux (HTTP → handler) ────────────────────────────────────────
 
 	// HTTP-1: HTTP command → Pub/Sub topic.
 	// The result (*.result) is consumed by PS-1 and forwarded to the webhook,
 	// completing the HTTP → Pub/Sub → HTTP round trip.
-	routers.HttpMux.Register(
+	routers.HTTPMux.Register(
 		pubsubPub,
 		cefilter.ByType("http.command"),
 		Person{},
@@ -36,7 +38,7 @@ func RegisterEventHandlers(params EventParams, routers RouterParams, logger *slo
 	)
 
 	// HTTP-2: HTTP command + JMESPath filter on payload → webhook directly.
-	routers.HttpMux.Register(
+	routers.HTTPMux.Register(
 		webhookPub,
 		cefilter.All(
 			cefilter.ByType("http.command.webhook"),

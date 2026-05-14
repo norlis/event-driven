@@ -1,3 +1,8 @@
+// Package eventmux is a transport-agnostic router that decodes incoming
+// CloudEvents into a typed payload, matches them against registered routes
+// (filter + handler), runs middleware chains, and optionally publishes a
+// result event back to a Publisher. The transport (Pub/Sub, SQS, HTTP, …) is
+// plugged in via the Subscription and Publisher interfaces.
 package eventmux
 
 import (

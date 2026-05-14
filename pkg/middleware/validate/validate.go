@@ -1,3 +1,5 @@
+// Package validate provides an eventmux middleware that runs
+// go-playground/validator on the decoded payload before reaching the handler.
 package validate
 
 import (
@@ -6,6 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/go-playground/validator/v10"
+
 	"github.com/norlis/event-driven/pkg/eventmux"
 )
 
