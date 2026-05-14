@@ -25,15 +25,19 @@ go run ./example/cmd
 
 The server listens on `:8880`. Health endpoints: `/status`, `/live`, `/ready`.
 
-## Publishers
+## Publishers used in this example
 
-The library provides two publisher implementations; both satisfy
-`eventmux.Publisher` and can be passed interchangeably to `mux.Register(...)`.
+This example wires two publisher implementations; both satisfy
+`eventmux.Publisher` and are passed interchangeably to `mux.Register(...)`.
 
 | Publisher | Package | Target | Use case |
 |---|---|---|---|
 | `pubsub.Publisher` | `pkg/transport/gcp/pubsub` | Google Cloud Pub/Sub topic | Async event pipelines |
 | `eventhttp.Publisher` | `pkg/transport/eventhttp` | Any HTTP endpoint | Webhooks, external APIs |
+
+> The library also ships `pkg/transport/aws/sns.Publisher` and
+> `pkg/transport/aws/sqs.Subscriber`. They are not wired in this demo —
+> see the top-level README for the full transport catalogue.
 
 ### `eventhttp.Publisher`
 
@@ -116,8 +120,8 @@ See `events.go`. Same handlers (`UseCase.Execute` / `UseCase.Command`) are reuse
 
 | ID | Mux | Filter | Publisher | Notes |
 |---|---|---|---|---|
-| HTTP-1 | `HttpMux` | `ByType("http.command")` | Pub/Sub topic | Cross: HTTP → Pub/Sub. Result picked up by PS-1. |
-| HTTP-2 | `HttpMux` | `ByType("http.command.webhook") AND JMESPath` | Webhook | Demonstrates `cefilter.All` + JMESPath. |
+| HTTP-1 | `HTTPMux` | `ByType("http.command")` | Pub/Sub topic | Cross: HTTP → Pub/Sub. Result picked up by PS-1. |
+| HTTP-2 | `HTTPMux` | `ByType("http.command.webhook") AND JMESPath` | Webhook | Demonstrates `cefilter.All` + JMESPath. |
 | PS-1 | `PrincipalMux` | `ByType("http.command.result")` | Webhook | Closes the HTTP → Pub/Sub → HTTP round trip. |
 | PS-2 | `PrincipalMux` | `ByType("com.example.person.created", "com.example.person.updated")` | Pub/Sub topic | Domain event pipeline. |
 
