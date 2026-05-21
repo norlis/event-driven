@@ -12,7 +12,7 @@ export PATH := $(TOOLS_BIN_DIR):$(PATH)
 # ====================================================================================
 # Comandos Públicos
 # ====================================================================================
-.PHONY: help all clean test lint format check-format tools
+.PHONY: help all clean test lint format check-format tools bench bench-baseline bench-compare
 
 help:
 	@echo "Uso: make [comando]"
@@ -25,6 +25,11 @@ help:
 	@echo "  test-sonar       Ejecuta pruebas generando reportes para SonarQube."
 	@echo "  vulncheck        Escanea vulnerabilidades conocidas."
 	@echo "  modernize        Muestra cambios sugeridos por go fix (sin aplicar)."
+	@echo ""
+	@echo "## --- Benchmarks ---"
+	@echo "  bench            Corre los benchmarks (count=5, lectura rápida)."
+	@echo "  bench-baseline   Guarda el baseline en .bench/baseline.txt (count=10)."
+	@echo "  bench-compare    Corre los benchmarks y compara contra el baseline con benchstat."
 	@echo ""
 	@echo "## --- Gestión de Dependencias ---"
 	@echo "  tools            Instala/actualiza las herramientas de desarrollo en ./bin."
@@ -90,6 +95,32 @@ test-sonar:
 	@echo "==> Generando reportes para SonarQube..."
 	@go test -covermode=atomic -coverprofile=coverage.out ./...
 	@go test -json ./... > report.json
+
+
+## ----------------------------------------
+## Benchmarks
+## ----------------------------------------
+BENCH_DIR := .bench
+
+bench:
+	@echo "==> Ejecutando benchmarks (count=5)..."
+	@go test -bench=. -benchmem -count=5 -run=^$$ ./...
+
+bench-baseline:
+	@echo "==> Capturando baseline en $(BENCH_DIR)/baseline.txt (count=10)..."
+	@mkdir -p $(BENCH_DIR)
+	@go test -bench=. -benchmem -count=10 -run=^$$ ./... > $(BENCH_DIR)/baseline.txt
+	@echo "==> Baseline guardado. Recordá committearlo si querés tenerlo como referencia compartida."
+
+bench-compare: tools
+	@if [ ! -f $(BENCH_DIR)/baseline.txt ]; then \
+		echo "ERROR: no existe $(BENCH_DIR)/baseline.txt. Corré 'make bench-baseline' primero."; \
+		exit 1; \
+	fi
+	@echo "==> Corriendo benchmarks contra baseline..."
+	@mkdir -p $(BENCH_DIR)
+	@go test -bench=. -benchmem -count=10 -run=^$$ ./... > $(BENCH_DIR)/new.txt
+	@$(TOOLS_BIN_DIR)/benchstat $(BENCH_DIR)/baseline.txt $(BENCH_DIR)/new.txt
 
 
 ## ----------------------------------------
