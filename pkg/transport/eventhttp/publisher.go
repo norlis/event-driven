@@ -38,6 +38,12 @@ type PublisherConfig struct {
 	// Retries are at the HTTP level and are independent from any event-level
 	// retry the caller may implement.
 	Retry *RetryConfig
+
+	// UserAgent overrides the User-Agent header sent by this publisher.
+	// Empty falls back to the package default (see defaultUserAgent in client.go).
+	// Useful when a deployment wants to identify itself to webhook destinations
+	// or observability tooling.
+	UserAgent string
 }
 
 // Publisher publishes CloudEvents to an HTTP endpoint using binary content mode
@@ -62,6 +68,7 @@ func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
 			Timeout:      cfg.Timeout,
 			Retry:        cfg.Retry,
 			Logger:       logger,
+			UserAgent:    cfg.UserAgent,
 			DefaultRetry: 3,
 		}),
 		logger:      logger,

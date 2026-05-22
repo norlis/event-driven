@@ -56,6 +56,10 @@ type TokenConfig struct {
 	// nil = defaults (2 retries on 5xx/429/network errors).
 	// Retry.Count < 0 disables retries explicitly.
 	Retry *RetryConfig
+
+	// UserAgent overrides the User-Agent header sent to the IdP.
+	// Empty falls back to the package default (see defaultUserAgent in client.go).
+	UserAgent string
 }
 
 // NewTokenProvider creates a TokenFunc that fetches tokens from an HTTP endpoint.
@@ -100,6 +104,7 @@ func NewTokenProvider(cfg TokenConfig) TokenFunc {
 			Timeout:      cfg.Timeout,
 			Retry:        cfg.Retry,
 			Logger:       nil,
+			UserAgent:    cfg.UserAgent,
 			DefaultRetry: 2,
 		}),
 	}

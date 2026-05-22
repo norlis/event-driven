@@ -34,6 +34,7 @@ type clientOpts struct {
 	Timeout      time.Duration
 	Retry        *RetryConfig
 	Logger       *slog.Logger
+	UserAgent    string
 	DefaultRetry int
 }
 
@@ -42,6 +43,11 @@ const (
 	defaultWaitTime     = 200 * time.Millisecond
 	defaultMaxWaitTime  = 5 * time.Second
 	transientStatusFrom = 500
+
+	// defaultUserAgent identifies outbound requests issued by this package.
+	// Overrides Resty's built-in "go-resty/..." so external systems see the
+	// framework name instead of the underlying HTTP client library.
+	defaultUserAgent = "go event-driven/v1.0.0-beta.2"
 )
 
 // newClient builds a *resty.Client with the package defaults. Close + drain
@@ -82,6 +88,12 @@ func newClient(opts clientOpts) *resty.Client {
 	if opts.Retry != nil && opts.Retry.RetryOn != nil {
 		c.AddRetryConditions(opts.Retry.RetryOn)
 	}
+
+	ua := opts.UserAgent
+	if ua == "" {
+		ua = defaultUserAgent
+	}
+	c.SetHeader("User-Agent", ua)
 
 	return c
 }
