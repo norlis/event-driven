@@ -31,7 +31,8 @@ func New(logger *slog.Logger) eventmux.Middleware {
 	return func(next eventmux.HandlerFunc) eventmux.HandlerFunc {
 		return func(ctx context.Context, data any) (json.RawMessage, error) {
 			if err := v.Struct(data); err != nil {
-				log.Warn("Input validation failed",
+				log.Warn(
+					"Input validation failed",
 					slog.Any("data", data),
 					slog.Any("error", err),
 				)

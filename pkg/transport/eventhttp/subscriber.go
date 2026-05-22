@@ -52,7 +52,8 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 		ce, err := h.extractCloudEvent(r)
 		if err != nil {
 			messageID := uuid.NewString()
-			h.logger.Error("Failed to extract CloudEvent from request",
+			h.logger.Error(
+				"Failed to extract CloudEvent from request",
 				slog.Any("error", err),
 				slog.String("path", h.config.Pattern),
 			)
@@ -67,7 +68,8 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 		}
 
 		messageID := ce.ID()
-		h.logger.Debug("Received HTTP message",
+		h.logger.Debug(
+			"Received HTTP message",
 			slog.String("id", messageID),
 			slog.Int("payloadSize", len(ce.Data())),
 			slog.String("path", h.config.Pattern),

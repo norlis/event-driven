@@ -163,7 +163,8 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 		return err
 	}
 
-	s.logger.Info("Starting SQS subscriber",
+	s.logger.Info(
+		"Starting SQS subscriber",
 		slog.String("queueURL", string(url)),
 		slog.Int("workers", s.cfg.ConsumeWorkers),
 	)
@@ -223,7 +224,8 @@ func (s *Subscriber) receiveBatch(ctx context.Context, url QueueURL, handler fun
 		if errors.Is(err, context.Canceled) {
 			return NoSleep
 		}
-		s.logger.Error("SQS ReceiveMessage failed",
+		s.logger.Error(
+			"SQS ReceiveMessage failed",
 			slog.Any("error", err),
 			slog.String("queueURL", string(url)),
 		)
@@ -242,7 +244,8 @@ func (s *Subscriber) receiveBatch(ctx context.Context, url QueueURL, handler fun
 func (s *Subscriber) processMessage(ctx context.Context, url QueueURL, m *sqstypes.Message, handler func(msg *event.Message)) {
 	ce, err := s.cfg.Unmarshaler.Unmarshal(m)
 	if err != nil {
-		s.logger.Error("SQS unmarshal failed",
+		s.logger.Error(
+			"SQS unmarshal failed",
 			slog.Any("error", err),
 			slog.String("messageID", awssdk.ToString(m.MessageId)),
 		)
@@ -259,7 +262,8 @@ func (s *Subscriber) processMessage(ctx context.Context, url QueueURL, m *sqstyp
 		// and SQS redeliver.
 	}
 
-	s.logger.Debug("SQS message received",
+	s.logger.Debug(
+		"SQS message received",
 		slog.String("messageID", messageID),
 		slog.String("queueURL", string(url)),
 	)
@@ -270,7 +274,8 @@ func (s *Subscriber) processMessage(ctx context.Context, url QueueURL, m *sqstyp
 func (s *Subscriber) deleteMessage(ctx context.Context, url QueueURL, receiptHandle, messageID string) {
 	input := s.cfg.GenerateDeleteMessageInput(url, receiptHandle)
 	if _, err := s.client.DeleteMessage(ctx, input); err != nil {
-		s.logger.Error("SQS DeleteMessage failed",
+		s.logger.Error(
+			"SQS DeleteMessage failed",
 			slog.Any("error", err),
 			slog.String("messageID", messageID),
 			slog.String("queueURL", string(url)),

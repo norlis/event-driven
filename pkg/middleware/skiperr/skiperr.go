@@ -50,7 +50,8 @@ func (i Skipper) Middleware(next eventmux.HandlerFunc) eventmux.HandlerFunc {
 			for _, predicate := range i.predicates {
 				if predicate.Matches(err) {
 					if i.logger != nil {
-						i.logger.Info("Skipper: error ignored by predicate",
+						i.logger.Info(
+							"Skipper: error ignored by predicate",
 							slog.Any("error", err),
 							slog.String("predicate", predicate.Description),
 						)

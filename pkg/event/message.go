@@ -36,7 +36,7 @@ func NewMessageWithoutAck(ce cloudevents.Event) *Message {
 // NewMessage wraps a CloudEvent with broker-level ack and nack callbacks.
 // The callbacks are de-duplicated: only the first Ack or Nack fires.
 func NewMessage(ce cloudevents.Event, ackFn, nackFn func()) *Message {
-	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in Message and called in Ack/Nack
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Message{
 		Event:  ce,
 		ack:    ackFn,

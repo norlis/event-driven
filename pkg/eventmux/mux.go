@@ -89,7 +89,8 @@ func (mux *Mux) RunBackground(parentCtx context.Context, onError OnErrorFunc) (s
 		err := mux.Run(ctx)
 
 		if err != nil && !errors.Is(err, context.Canceled) {
-			mux.cfg.Logger.Error("Mux crashed",
+			mux.cfg.Logger.Error(
+				"Mux crashed",
 				slog.Any("error", err),
 				slog.String("name", mux.Name()),
 				slog.Any("cause", context.Cause(ctx)),
@@ -100,7 +101,8 @@ func (mux *Mux) RunBackground(parentCtx context.Context, onError OnErrorFunc) (s
 			return
 		}
 
-		mux.cfg.Logger.Info("Mux stopped",
+		mux.cfg.Logger.Info(
+			"Mux stopped",
 			slog.String("name", mux.Name()),
 			slog.Any("cause", context.Cause(ctx)),
 		)
@@ -133,7 +135,8 @@ func (mux *Mux) Run(ctx context.Context) error {
 	mux.cfg.Logger.Info("Mux starting subscription...")
 
 	if err := mux.cfg.Subscription.Start(ctx, func(msg *event.Message) {
-		mux.cfg.Logger.Debug("Mux received message",
+		mux.cfg.Logger.Debug(
+			"Mux received message",
 			slog.String("id", msg.ID()),
 			slog.String("type", msg.Type()),
 			slog.String("source", msg.Source()),
@@ -173,7 +176,8 @@ func (mux *Mux) handleNoRouteFound(msg *event.Message) {
 func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 	eventPayload, err := decodeInto(reflect.TypeOf(rt.ObjectType), msg.Data())
 	if err != nil {
-		mux.cfg.Logger.Error("Failed to unmarshal payload",
+		mux.cfg.Logger.Error(
+			"Failed to unmarshal payload",
 			slog.Any("error", err),
 			slog.String("id", msg.ID()),
 			slog.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
@@ -199,7 +203,8 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 
 	data, err := effectiveHandler(handlerCtx, eventPayload)
 	if err != nil {
-		mux.cfg.Logger.Error("Handler execution failed",
+		mux.cfg.Logger.Error(
+			"Handler execution failed",
 			slog.Any("error", err),
 			slog.String("id", msg.ID()),
 		)
@@ -207,7 +212,8 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 		// NonRetryableError → Ack (discard). Retrying won't fix it (e.g. validation, bad payload).
 		// Retryable error → Nack. The broker will redeliver with its own backoff/DLQ policy.
 		if _, ok := errors.AsType[*event.NonRetryableError](err); ok {
-			mux.cfg.Logger.Warn("Non-retryable error, discarding message",
+			mux.cfg.Logger.Warn(
+				"Non-retryable error, discarding message",
 				slog.Any("error", err),
 				slog.String("id", msg.ID()),
 			)
@@ -245,7 +251,8 @@ func (mux *Mux) publishResult(msg *event.Message, data json.RawMessage, store *m
 	}
 
 	if err := pub.Publish(ce); err != nil {
-		mux.cfg.Logger.Error("Failed to publish result",
+		mux.cfg.Logger.Error(
+			"Failed to publish result",
 			slog.Any("error", err),
 			slog.String("id", msg.ID()),
 		)

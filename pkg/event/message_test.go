@@ -60,7 +60,8 @@ func TestMessage_AckOrNackOnlyOnce(t *testing.T) {
 	t.Run("Ack_then_Nack", func(t *testing.T) {
 		t.Parallel()
 		ackCount, nackCount := 0, 0
-		msg := NewMessage(newTestEvent("once-1"),
+		msg := NewMessage(
+			newTestEvent("once-1"),
 			func() { ackCount++ },
 			func() { nackCount++ },
 		)
@@ -81,7 +82,8 @@ func TestMessage_AckOrNackOnlyOnce(t *testing.T) {
 	t.Run("Nack_then_Ack", func(t *testing.T) {
 		t.Parallel()
 		ackCount, nackCount := 0, 0
-		msg := NewMessage(newTestEvent("once-2"),
+		msg := NewMessage(
+			newTestEvent("once-2"),
 			func() { ackCount++ },
 			func() { nackCount++ },
 		)

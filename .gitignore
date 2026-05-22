@@ -33,3 +33,6 @@ go.work.sum
 **.DS_Store
 /deployments/development/tempo-data/*
 /bin
+
+# Benchmark artifacts (machine-specific; commitealos explícitamente si querés compartir).
+/.bench/

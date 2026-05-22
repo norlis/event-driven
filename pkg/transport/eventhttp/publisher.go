@@ -1,14 +1,13 @@
 package eventhttp
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
+	"resty.dev/v3"
 )
 
 // TokenFunc returns an authentication token. Implementations should handle
@@ -32,31 +31,39 @@ type PublisherConfig struct {
 
 	// TokenHeader is the header name for the token (default: "Authorization").
 	TokenHeader string
+
+	// Retry overrides the default retry policy of the publisher.
+	// nil = defaults (3 retries on 5xx/429/network errors, 200ms→5s exp backoff).
+	// Retry.Count < 0 disables retries explicitly.
+	// Retries are at the HTTP level and are independent from any event-level
+	// retry the caller may implement.
+	Retry *RetryConfig
 }
 
 // Publisher publishes CloudEvents to an HTTP endpoint using binary content mode
 // (Ce-* headers + body as data), following the CloudEvents HTTP protocol binding spec.
 type Publisher struct {
 	cfg         PublisherConfig
-	client      *http.Client
+	client      *resty.Client
 	logger      *slog.Logger
 	tokenHeader string
 }
 
-// NewPublisher returns a Publisher with sensible defaults: 10s timeout and
-// "Authorization" as the token header.
+// NewPublisher returns a Publisher with sensible defaults: 10s timeout,
+// 3 retries on transient failures, and "Authorization" as the token header.
 func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
-	timeout := cfg.Timeout
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
 	tokenHeader := cfg.TokenHeader
 	if tokenHeader == "" {
 		tokenHeader = "Authorization"
 	}
 	return &Publisher{
-		cfg:         cfg,
-		client:      &http.Client{Timeout: timeout},
+		cfg: cfg,
+		client: newClient(clientOpts{
+			Timeout:      cfg.Timeout,
+			Retry:        cfg.Retry,
+			Logger:       logger,
+			DefaultRetry: 3,
+		}),
 		logger:      logger,
 		tokenHeader: tokenHeader,
 	}
@@ -66,57 +73,49 @@ func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
 func (p *Publisher) Publish(ce cloudevents.Event) error {
 	ctx := context.Background()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.TargetURL, bytes.NewReader(ce.Data()))
-	if err != nil {
-		return fmt.Errorf("http publisher: create request: %w", err)
-	}
+	req := p.client.R().
+		SetContext(ctx).
+		SetHeaders(p.cfg.Headers).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Ce-Id", ce.ID()).
+		SetHeader("Ce-Specversion", ce.SpecVersion()).
+		SetHeader("Ce-Type", ce.Type()).
+		SetHeader("Ce-Source", ce.Source()).
+		SetBody(ce.Data())
 
-	// Static headers.
-	for k, v := range p.cfg.Headers {
-		req.Header.Set(k, v)
-	}
-
-	// Dynamic token.
-	if p.cfg.TokenProvider != nil {
-		token, tokenErr := p.cfg.TokenProvider(ctx)
-		if tokenErr != nil {
-			return fmt.Errorf("http publisher: token provider: %w", tokenErr)
-		}
-		req.Header.Set(p.tokenHeader, token)
-	}
-
-	// Binary content mode: CloudEvent attributes as headers.
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Ce-Id", ce.ID())
-	req.Header.Set("Ce-Specversion", ce.SpecVersion())
-	req.Header.Set("Ce-Type", ce.Type())
-	req.Header.Set("Ce-Source", ce.Source())
 	if !ce.Time().IsZero() {
-		req.Header.Set("Ce-Time", ce.Time().Format(time.RFC3339))
+		req.SetHeader("Ce-Time", ce.Time().Format(time.RFC3339))
 	}
 	if ce.Subject() != "" {
-		req.Header.Set("Ce-Subject", ce.Subject())
+		req.SetHeader("Ce-Subject", ce.Subject())
 	}
 	for k, v := range ce.Extensions() {
 		if s, ok := v.(string); ok {
-			req.Header.Set("Ce-"+k, s)
+			req.SetHeader("Ce-"+k, s)
 		}
 	}
 
-	resp, err := p.client.Do(req)
+	if p.cfg.TokenProvider != nil {
+		token, err := p.cfg.TokenProvider(ctx)
+		if err != nil {
+			return fmt.Errorf("http publisher: token provider: %w", err)
+		}
+		req.SetHeader(p.tokenHeader, token)
+	}
+
+	resp, err := req.Post(p.cfg.TargetURL)
 	if err != nil {
 		return fmt.Errorf("http publisher: send: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("http publisher: unexpected status %d from %s", resp.StatusCode, p.cfg.TargetURL)
+	if resp.IsError() {
+		return fmt.Errorf("http publisher: unexpected status %d from %s", resp.StatusCode(), p.cfg.TargetURL)
 	}
 
-	p.logger.Debug("CloudEvent published via HTTP",
+	p.logger.Debug(
+		"CloudEvent published via HTTP",
 		slog.String("targetURL", p.cfg.TargetURL),
 		slog.String("ceId", ce.ID()),
-		slog.Int("status", resp.StatusCode),
+		slog.Int("status", resp.StatusCode()),
 	)
 	return nil
 }

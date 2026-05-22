@@ -32,7 +32,8 @@ func New(expr string, logger *slog.Logger) *Filter {
 func (f *Filter) Match(msg *event.Message) bool {
 	var data map[string]any
 	if err := json.Unmarshal(msg.Data(), &data); err != nil {
-		f.logger.Error("Filter: failed to decode JSON",
+		f.logger.Error(
+			"Filter: failed to decode JSON",
 			slog.Any("error", err),
 			slog.String("id", msg.ID()),
 		)
@@ -41,7 +42,8 @@ func (f *Filter) Match(msg *event.Message) bool {
 
 	res, err := gojmespath.Search(f.expr, data)
 	if err != nil {
-		f.logger.Error("Filter: expression evaluation error",
+		f.logger.Error(
+			"Filter: expression evaluation error",
 			slog.Any("error", err),
 			slog.String("expression", f.expr),
 			slog.String("id", msg.ID()),
@@ -51,7 +53,8 @@ func (f *Filter) Match(msg *event.Message) bool {
 
 	match, ok := res.(bool)
 	if !ok {
-		f.logger.Warn("Filter: expression result is not boolean",
+		f.logger.Warn(
+			"Filter: expression result is not boolean",
 			slog.Any("result", res),
 			slog.String("expression", f.expr),
 			slog.String("id", msg.ID()),
