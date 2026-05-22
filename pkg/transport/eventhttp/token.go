@@ -1,14 +1,14 @@
 package eventhttp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
+
+	"resty.dev/v3"
 )
 
 // TokenConfig configures a token provider that fetches tokens via HTTP.
@@ -35,31 +35,51 @@ type TokenConfig struct {
 	// TokenPrefix is prepended to the token value (e.g., "Bearer ").
 	TokenPrefix string
 
-	// CacheTTL controls how long the token is cached before re-fetching.
-	// Zero means no caching — a new token is fetched on every publish.
+	// ExpiresInField is the OAuth2-style field name in the response that
+	// indicates the token's lifetime in seconds (commonly "expires_in").
+	// When set and the field is present and numeric, it takes precedence over
+	// CacheTTL. When set but the field is missing or non-numeric, falls back
+	// to CacheTTL. Accepts float64 (default JSON number decoding) and
+	// json.Number; string values are not parsed (known limitation, extendable
+	// later without breaking the API).
+	ExpiresInField string
+
+	// CacheTTL controls how long the token is cached when ExpiresInField is
+	// unset or absent in the response. Zero means no caching — a new token is
+	// fetched on every publish.
 	CacheTTL time.Duration
 
 	// Timeout for the token HTTP request (default: 10s).
 	Timeout time.Duration
+
+	// Retry overrides the default retry policy of the token provider.
+	// nil = defaults (2 retries on 5xx/429/network errors).
+	// Retry.Count < 0 disables retries explicitly.
+	Retry *RetryConfig
+
+	// UserAgent overrides the User-Agent header sent to the IdP.
+	// Empty falls back to the package default (see defaultUserAgent in client.go).
+	UserAgent string
 }
 
 // NewTokenProvider creates a TokenFunc that fetches tokens from an HTTP endpoint.
 //
 // Usage examples:
 //
-//	// OAuth2 client_credentials
+//	// OAuth2 client_credentials with server-driven TTL.
 //	provider := NewTokenProvider(TokenConfig{
 //	    URL:    "https://auth.example.com/oauth/token",
 //	    Method: "POST",
 //	    Headers: map[string]string{
 //	        "Content-Type": "application/x-www-form-urlencoded",
 //	    },
-//	    Body:        []byte("grant_type=client_credentials&client_id=ID&client_secret=SECRET"),
-//	    TokenPrefix: "Bearer ",
-//	    CacheTTL:    50 * time.Minute,
+//	    Body:           []byte("grant_type=client_credentials&client_id=ID&client_secret=SECRET"),
+//	    TokenPrefix:    "Bearer ",
+//	    ExpiresInField: "expires_in",
+//	    CacheTTL:       50 * time.Minute, // fallback if the IdP omits expires_in
 //	})
 //
-//	// Custom auth API
+//	// Custom auth API with fixed-TTL cache.
 //	provider := NewTokenProvider(TokenConfig{
 //	    URL:    "https://api.example.com/auth",
 //	    Headers: map[string]string{
@@ -77,21 +97,23 @@ func NewTokenProvider(cfg TokenConfig) TokenFunc {
 	if cfg.ResponseTokenField == "" {
 		cfg.ResponseTokenField = "access_token"
 	}
-	timeout := cfg.Timeout
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
 
 	tp := &httpTokenProvider{
-		cfg:    cfg,
-		client: &http.Client{Timeout: timeout},
+		cfg: cfg,
+		client: newClient(clientOpts{
+			Timeout:      cfg.Timeout,
+			Retry:        cfg.Retry,
+			Logger:       nil,
+			UserAgent:    cfg.UserAgent,
+			DefaultRetry: 2,
+		}),
 	}
 	return tp.Token
 }
 
 type httpTokenProvider struct {
 	cfg    TokenConfig
-	client *http.Client
+	client *resty.Client
 
 	mu        sync.Mutex
 	cached    string
@@ -106,58 +128,68 @@ func (tp *httpTokenProvider) Token(ctx context.Context) (string, error) {
 		return tp.cached, nil
 	}
 
-	token, err := tp.fetch(ctx)
+	token, ttl, err := tp.fetch(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	if tp.cfg.CacheTTL > 0 {
+	if ttl > 0 {
 		tp.cached = token
-		tp.expiresAt = time.Now().Add(tp.cfg.CacheTTL)
+		tp.expiresAt = time.Now().Add(ttl)
 	}
 
 	return token, nil
 }
 
-func (tp *httpTokenProvider) fetch(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, tp.cfg.Method, tp.cfg.URL, bytes.NewReader(tp.cfg.Body))
-	if err != nil {
-		return "", fmt.Errorf("token provider: create request: %w", err)
-	}
-
-	for k, v := range tp.cfg.Headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := tp.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token provider: request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		return "", fmt.Errorf("token provider: unexpected status %d from %s", resp.StatusCode, tp.cfg.URL)
-	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("token provider: read response: %w", err)
-	}
-
+func (tp *httpTokenProvider) fetch(ctx context.Context) (string, time.Duration, error) {
 	var result map[string]any
-	if err = json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("token provider: parse response: %w", err)
+
+	resp, err := tp.client.R().
+		SetContext(ctx).
+		SetHeaders(tp.cfg.Headers).
+		SetBody(tp.cfg.Body).
+		SetResult(&result).
+		Execute(tp.cfg.Method, tp.cfg.URL)
+	if err != nil {
+		return "", 0, fmt.Errorf("token provider: request failed: %w", err)
+	}
+	if resp.IsError() {
+		return "", 0, fmt.Errorf("token provider: unexpected status %d from %s", resp.StatusCode(), tp.cfg.URL)
 	}
 
 	tokenVal, ok := result[tp.cfg.ResponseTokenField]
 	if !ok {
-		return "", fmt.Errorf("token provider: field %q not found in response", tp.cfg.ResponseTokenField)
+		return "", 0, fmt.Errorf("token provider: field %q not found in response", tp.cfg.ResponseTokenField)
 	}
-
 	token, ok := tokenVal.(string)
 	if !ok {
-		return "", fmt.Errorf("token provider: field %q is not a string", tp.cfg.ResponseTokenField)
+		return "", 0, fmt.Errorf("token provider: field %q is not a string", tp.cfg.ResponseTokenField)
 	}
 
-	return tp.cfg.TokenPrefix + token, nil
+	return tp.cfg.TokenPrefix + token, tp.resolveTTL(result), nil
+}
+
+// resolveTTL returns the effective TTL for a freshly fetched token.
+// Priority: ExpiresInField from the response > CacheTTL > 0 (no caching).
+// If ExpiresInField is configured but missing or non-numeric, falls back to
+// CacheTTL.
+func (tp *httpTokenProvider) resolveTTL(result map[string]any) time.Duration {
+	if tp.cfg.ExpiresInField == "" {
+		return tp.cfg.CacheTTL
+	}
+	raw, ok := result[tp.cfg.ExpiresInField]
+	if !ok {
+		return tp.cfg.CacheTTL
+	}
+	switch v := raw.(type) {
+	case float64:
+		if v > 0 {
+			return time.Duration(v) * time.Second
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return tp.cfg.CacheTTL
 }

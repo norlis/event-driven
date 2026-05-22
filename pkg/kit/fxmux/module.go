@@ -21,7 +21,8 @@ func Bind(lc fx.Lifecycle, mux *eventmux.Mux, logger *slog.Logger, shutdown fx.S
 		OnStart: func(ctx context.Context) error {
 			logger.Info("Starting Mux...", slog.String("name", mux.Name()))
 			stop = mux.RunBackground(context.Background(), func(err error) {
-				logger.Error("Mux crashed, requesting app shutdown",
+				logger.Error(
+					"Mux crashed, requesting app shutdown",
 					slog.String("name", mux.Name()),
 					slog.Any("error", err),
 				)

@@ -58,21 +58,24 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	subscriber.ReceiveSettings.NumGoroutines = s.cfg.NumGoroutines
 	subscriber.ReceiveSettings.MaxExtension = s.cfg.MaxExtension
 
-	s.logger.Info("Starting Pub/Sub message reception",
+	s.logger.Info(
+		"Starting Pub/Sub message reception",
 		slog.String("subscriptionID", s.cfg.SubscriptionID),
 		slog.Int("maxOutstandingMessages", subscriber.ReceiveSettings.MaxOutstandingMessages),
 		slog.Int("numGoroutines", subscriber.ReceiveSettings.NumGoroutines),
 	)
 
 	err := subscriber.Receive(ctx, func(ctx context.Context, m *gpubsub.Message) {
-		s.logger.Debug("Pub/Sub message received",
+		s.logger.Debug(
+			"Pub/Sub message received",
 			slog.String("messageID", m.ID),
 			slog.Any("attributes", m.Attributes),
 		)
 
 		ce, err := s.cfg.Unmarshaler.Unmarshal(m)
 		if err != nil {
-			s.logger.Error("Pub/Sub unmarshal failed",
+			s.logger.Error(
+				"Pub/Sub unmarshal failed",
 				slog.Any("error", err),
 				slog.String("messageID", m.ID),
 			)
@@ -84,7 +87,8 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	})
 
 	if err != nil && !errors.Is(err, context.Canceled) {
-		s.logger.Error("Pub/Sub Receive error",
+		s.logger.Error(
+			"Pub/Sub Receive error",
 			slog.Any("error", err),
 			slog.String("subscriptionID", s.cfg.SubscriptionID),
 		)

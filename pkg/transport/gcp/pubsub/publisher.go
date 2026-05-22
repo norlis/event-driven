@@ -57,14 +57,16 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 	result := publisher.Publish(ctx, msg)
 	id, err := result.Get(ctx)
 	if err != nil {
-		p.logger.Error("Failed to publish message to Pub/Sub",
+		p.logger.Error(
+			"Failed to publish message to Pub/Sub",
 			slog.Any("error", err),
 			slog.String("topicID", p.cfg.TopicID),
 			slog.String("originalID", ce.ID()),
 		)
 		return fmt.Errorf("pubsub publish: %w", err)
 	}
-	p.logger.Debug("Message published to Pub/Sub",
+	p.logger.Debug(
+		"Message published to Pub/Sub",
 		slog.String("topicID", p.cfg.TopicID),
 		slog.String("publishedID", id),
 		slog.String("originalID", ce.ID()),

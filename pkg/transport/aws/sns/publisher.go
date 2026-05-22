@@ -93,7 +93,8 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 
 	out, err := p.client.Publish(context.Background(), input)
 	if err != nil {
-		p.logger.Error("Failed to publish to SNS",
+		p.logger.Error(
+			"Failed to publish to SNS",
 			slog.Any("error", err),
 			slog.String("topicARN", string(p.topicARN)),
 			slog.String("originalID", ce.ID()),
@@ -101,7 +102,8 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 		return fmt.Errorf("aws/sns: publish: %w", err)
 	}
 
-	p.logger.Debug("CloudEvent published to SNS",
+	p.logger.Debug(
+		"CloudEvent published to SNS",
 		slog.String("topicARN", string(p.topicARN)),
 		slog.String("messageID", awssdk.ToString(out.MessageId)),
 		slog.String("originalID", ce.ID()),
