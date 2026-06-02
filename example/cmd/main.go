@@ -9,8 +9,7 @@ import (
 	"github.com/norlis/event-driven/example"
 	"github.com/norlis/event-driven/pkg/kit/fxmux"
 	"github.com/norlis/event-driven/pkg/transport/gcp/pubsub"
-	"github.com/norlis/httpgate/pkg/application/health"
-	httpgateport "github.com/norlis/httpgate/pkg/port"
+	"github.com/norlis/httpgate/health"
 	"go.uber.org/fx"
 )
 
@@ -53,7 +52,7 @@ func main() {
 		fx.Invoke(func(router *http.ServeMux, status *health.Status, checker *pubsub.HealthChecker) {
 			router.Handle("GET /status", status)
 			router.Handle("GET /live", health.NewProbe(nil))
-			router.Handle("GET /ready", health.NewProbe(map[string]httpgateport.Checker{
+			router.Handle("GET /ready", health.NewProbe(map[string]health.Checker{
 				"pub/sub": checker,
 			}))
 		}),

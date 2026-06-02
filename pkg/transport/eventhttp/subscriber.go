@@ -12,8 +12,6 @@ import (
 	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/google/uuid"
 
-	"github.com/norlis/httpgate/pkg/adapter/apidriven/middleware"
-
 	"github.com/norlis/event-driven/pkg/event"
 	"github.com/norlis/event-driven/pkg/eventmux"
 )
@@ -21,9 +19,8 @@ import (
 // SubscriberConfig configures the HTTP subscriber. Pattern is the
 // http.ServeMux pattern (e.g. "POST /command") the subscriber registers.
 type SubscriberConfig struct {
-	Pattern    string
-	Logger     *slog.Logger
-	Middleware middleware.Middleware
+	Pattern string
+	Logger  *slog.Logger
 }
 
 // Subscriber turns incoming HTTP requests into CloudEvents and forwards them

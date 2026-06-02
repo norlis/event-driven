@@ -44,9 +44,11 @@ type HealthChecker struct {
 
 // Check performs a GetTopic + GetSubscription call for each registered
 // resource and aggregates the results. Returns a wrapped multi-error when
-// any resource is missing or unreachable.
-func (p *HealthChecker) Check() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+// any resource is missing or unreachable. The caller's context is honored
+// (e.g. cancellation when the probe's HTTP client disconnects) but capped
+// at 15s so a single check cannot hang indefinitely.
+func (p *HealthChecker) Check(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
 	var errs []error
