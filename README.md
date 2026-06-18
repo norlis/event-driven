@@ -185,6 +185,20 @@ Every transport package provides at least a `Publisher`, a `Subscriber`, or both
 | `pkg/transport/aws/sns` | `sns.Publisher` | — | Pub-only (SNS is fanout) |
 | `pkg/transport/aws/sqs` | — | `sqs.Subscriber` | Long-polling, configurable workers |
 | `pkg/transport/eventhttp` | `eventhttp.Publisher` | `eventhttp.Subscriber` | Binary + structured + plain JSON |
+| `pkg/transport/nats/core` | `core.Publisher` | `core.Subscriber` | Core NATS, native fan-out (no persistence) |
+| `pkg/transport/nats/jetstream` | `jetstream.Publisher` | `jetstream.Subscriber` | JetStream, **fan-out via ephemeral consumers** + `HealthChecker` |
+
+The NATS transport is **fan-out**: every running instance receives **every** event — the opposite of SQS competing consumers (where one instance per message wins). This is the model to use when all instances must react to the same events (cache invalidation, config refresh, broadcast).
+
+- **`core`** — a plain `Subscribe` (empty `QueueGroup`) delivers to all subscribers. No persistence: events arriving while an instance is down are lost. Ack/Nack are no-ops
+- **`jetstream`** — each instance creates its **own ephemeral consumer** on a shared stream with `DeliverPolicy=New`.
+  Every instance gets every new event; the consumer is auto-created at startup and auto-removed (`InactiveThreshold`) when the instance dies. Within a live instance, a failed handler `Nak`s and the message is redelivered. Events arriving while an instance is **down** are missed by that instance (by design).
+
+Provisioning: the **stream** is assumed to exist in production (created by IaC/ the `nats` CLI); set `AutoProvisionStream: true` (with a `StreamConfig`) for
+local/dev. Per-instance **consumers** are always auto-created at runtime. Use `jetstream.NewHealthChecker(js, jetstream.WithStreams("ORDERS"))` for `/ready`.
+
+> **Need work-queue (one instance per message) instead?**
+> That is a future additive change — a `Durable` field on `jetstream.SubscriberConfig` switches  to a shared durable consumer.
 
 **AWS Identity helper** — instead of hardcoding region/account, `aws.Identity{Config: awsCfg}` derives them automatically (region from `awsCfg.Region`, account via `sts:GetCallerIdentity`, cached). Pass topic/queue names instead of full ARNs/URLs:
 
