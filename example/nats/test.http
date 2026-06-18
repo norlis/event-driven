@@ -1,0 +1,64 @@
+# Requests for the NATS example (example/nats/main.go).
+#
+# 1. docker compose -f example/nats/compose.yaml up -d
+# 2. go run ./example/nats
+# 3. send the requests below (JetBrains / VS Code REST Client).
+#
+# Flow: POST /publish (CE type http.command.nats) -> HTTP mux publishes the
+# result to NATS -> NATS mux consumes it and logs "Received event from NATS".
+
+@host = http://localhost:8080
+
+### Happy path — binary-mode CloudEvent, routed to NATS then logged.
+POST {{host}}/publish
+Ce-Id: 11111111-1111-1111-1111-111111111111
+Ce-Source: demo/test.http
+Ce-Specversion: 1.0
+Ce-Type: http.command.nats
+Content-Type: application/json
+
+{
+  "name": "ada",
+  "age": 36
+}
+
+### Validation failure — "age" is required (validate preflight rejects it).
+POST {{host}}/publish
+Ce-Id: 22222222-2222-2222-2222-222222222222
+Ce-Source: demo/test.http
+Ce-Specversion: 1.0
+Ce-Type: http.command.nats
+Content-Type: application/json
+
+{
+  "name": "grace"
+}
+
+### No matching route — unknown type (http mux has ReportOnNoMatch: true).
+POST {{host}}/publish
+Ce-Id: 33333333-3333-3333-3333-333333333333
+Ce-Source: demo/test.http
+Ce-Specversion: 1.0
+Ce-Type: http.command.unknown
+Content-Type: application/json
+
+{
+  "name": "alan",
+  "age": 41
+}
+
+### Structured-mode CloudEvent — full envelope in the body.
+POST {{host}}/publish
+Content-Type: application/cloudevents+json
+
+{
+  "id": "44444444-4444-4444-4444-444444444444",
+  "source": "demo/test.http",
+  "specversion": "1.0",
+  "type": "http.command.nats",
+  "datacontenttype": "application/json",
+  "data": {
+    "name": "linus",
+    "age": 29
+  }
+}

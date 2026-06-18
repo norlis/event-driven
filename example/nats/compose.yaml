@@ -1,0 +1,35 @@
+# Self-contained NATS example: a NATS server (JetStream) + the demo app.
+#
+#   docker compose -f example/nats/compose.yaml up --build
+#
+# The app (example/nats/main.go) connects to nats://nats:4222, auto-provisions
+# the EVENTS stream, and serves the HTTP endpoint on localhost:8080
+# (see example/nats/test.http).
+services:
+  nats:
+    image: nats:2-alpine
+    container_name: nats
+    # -js  enable JetStream;  -m 8222  HTTP monitoring endpoint.
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222" # client connections
+      - "8222:8222" # monitoring (http://localhost:8222)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: ../.. # repo root — the Dockerfile needs go.mod + pkg/
+      dockerfile: example/nats/Dockerfile
+    container_name: nats-example
+    environment:
+      NATS_URL: nats://nats:4222
+    ports:
+      - "8080:8080" # POST /publish
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: on-failure
