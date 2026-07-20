@@ -114,7 +114,7 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 	if err != nil {
 		return fmt.Errorf("http publisher: send: %w", err)
 	}
-	if resp.IsError() {
+	if resp.IsStatusFailure() {
 		return fmt.Errorf("http publisher: unexpected status %d from %s", resp.StatusCode(), p.cfg.TargetURL)
 	}
 

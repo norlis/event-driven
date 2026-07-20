@@ -153,7 +153,7 @@ func (tp *httpTokenProvider) fetch(ctx context.Context) (string, time.Duration, 
 	if err != nil {
 		return "", 0, fmt.Errorf("token provider: request failed: %w", err)
 	}
-	if resp.IsError() {
+	if resp.IsStatusFailure() {
 		return "", 0, fmt.Errorf("token provider: unexpected status %d from %s", resp.StatusCode(), tp.cfg.URL)
 	}
 
