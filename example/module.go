@@ -13,8 +13,11 @@ import (
 	gpubsub "cloud.google.com/go/pubsub/v2"
 	"go.uber.org/fx"
 
+	"github.com/norlis/httpgate/logging"
+
 	"github.com/norlis/event-driven/pkg/eventmux"
 	"github.com/norlis/event-driven/pkg/kit/fxmux"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/middleware/recover"
 	"github.com/norlis/event-driven/pkg/middleware/skiperr"
 	"github.com/norlis/event-driven/pkg/middleware/validate"
@@ -28,8 +31,22 @@ const (
 	envSubscription = "EVT_SUBSCRIPTION"
 	envPublishTopic = "EVT_PUBLISH"
 	envWebhookURL   = "WEBHOOK_URL"
-	envLogLevel     = "LOG_LEVEL" // "debug" or "info" (default)
+	envLogLevel     = "LOG_LEVEL"       // "debug" or "info" (default)
+	envServiceName  = "SERVICE_NAME"    // service.name (default "event-driven-example")
+	envServiceVer   = "SERVICE_VERSION" // service.version (default "dev")
+	envEnvironment  = "ENVIRONMENT"     // deployment.environment.name (default "local")
 )
+
+// httpServerAddr is the address the demo HTTP server binds to.
+const httpServerAddr = ":8880"
+
+// getenvDefault returns the environment variable value, or fallback when unset.
+func getenvDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 // SubscriptionParams collects the named Subscription dependencies consumed by
 // the two muxes (one HTTP, one Pub/Sub).
@@ -57,13 +74,20 @@ type EventParams struct {
 	Handler UseCase
 }
 
-// NewLogger returns a JSON slog logger whose level is controlled by LOG_LEVEL.
+// NewLogger returns the platform-standard logger (NDJSON, OTel fields, ISO
+// 8601 UTC timestamps, automatic trace_id/span_id injection). DEBUG stays off
+// unless LOG_LEVEL=debug.
 func NewLogger() *slog.Logger {
 	level := slog.LevelInfo
 	if strings.EqualFold(os.Getenv(envLogLevel), "debug") {
 		level = slog.LevelDebug
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	return logging.New(
+		os.Stdout,
+		logging.WithService(getenvDefault(envServiceName, "event-driven-example"), getenvDefault(envServiceVer, "dev")),
+		logging.WithEnvironment(getenvDefault(envEnvironment, "local")),
+		logging.WithLevel(level),
+	)
 }
 
 // NewPubSubClient constructs the GCP Pub/Sub client and registers a Close hook
@@ -76,7 +100,7 @@ func NewPubSubClient(lc fx.Lifecycle, logger *slog.Logger) (*gpubsub.Client, err
 
 	lc.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
-			logger.Info("Closing Pub/Sub client...")
+			logger.Info("pubsub client closing")
 			return client.Close()
 		},
 	})
@@ -91,7 +115,7 @@ func NewAppSubscription(c *gpubsub.Client, logger *slog.Logger) eventmux.Subscri
 		MaxOutstandingMessages: 50,
 		NumGoroutines:          10,
 		MaxExtension:           60 * time.Second,
-	}, logger.With(slog.String("logger", "app-subscription")))
+	}, logger)
 }
 
 // NewEventPublisher builds the Pub/Sub publisher bound to EVT_PUBLISH. Returns
@@ -100,13 +124,13 @@ func NewAppSubscription(c *gpubsub.Client, logger *slog.Logger) eventmux.Subscri
 func NewEventPublisher(c *gpubsub.Client, logger *slog.Logger) (eventmux.Publisher, error) {
 	topic := os.Getenv(envPublishTopic)
 	if topic == "" {
-		logger.Info("No publish topic configured; result publisher disabled.")
+		logger.Info("result publisher disabled")
 		return nil, nil //nolint:nilnil // fx expects nil publisher when topic is not configured
 	}
 	return pubsub.NewPublisher(c, pubsub.PublisherConfig{
 		ProjectID: os.Getenv(envProjectID),
 		TopicID:   topic,
-	}, logger.With(slog.String("logger", "publisher"))), nil
+	}, logger), nil
 }
 
 // NewHTTPMux builds the mux consuming the HTTP subscriber.
@@ -114,11 +138,11 @@ func NewHTTPMux(lc fx.Lifecycle, subs SubscriptionParams, logger *slog.Logger, s
 	mux := eventmux.New(eventmux.Config{
 		Name:            "http-mux",
 		Subscription:    subs.HTTPSubscription,
-		Logger:          logger.With(slog.String("logger", "http-mux")),
+		Logger:          logger,
 		ReportOnNoMatch: true,
 	})
 	mux.Use(recover.Middleware)
-	mux.UsePreflight(validate.New(logger))
+	mux.UsePreflight(validate.New())
 
 	fxmux.Bind(lc, mux, logger, sd)
 	return mux
@@ -129,7 +153,7 @@ func NewPrincipalMux(lc fx.Lifecycle, subs SubscriptionParams, logger *slog.Logg
 	mux := eventmux.New(eventmux.Config{
 		Name:         "pubsub-principal",
 		Subscription: subs.AppSubscription,
-		Logger:       logger.With(slog.String("logger", "pubsub-mux")),
+		Logger:       logger,
 	})
 
 	mux.Use(
@@ -150,17 +174,17 @@ func NewPrincipalMux(lc fx.Lifecycle, subs SubscriptionParams, logger *slog.Logg
 func NewHTTPServerMux(lc fx.Lifecycle, logger *slog.Logger) *http.ServeMux {
 	s := http.NewServeMux()
 	server := &http.Server{
-		Addr:              ":8880",
+		Addr:              httpServerAddr,
 		Handler:           s,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			logger.Info("HTTP server listening on :8880")
+			logger.Info("http server started", slog.String(logfields.KeyServerAddress, httpServerAddr))
 			go func() {
 				if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					logger.Error("HTTP server failed", slog.Any("error", err))
+					logger.Error("http server failed", logging.Err(err))
 				}
 			}()
 			return nil
@@ -179,7 +203,7 @@ func NewHTTPServerMux(lc fx.Lifecycle, logger *slog.Logger) *http.ServeMux {
 func NewHTTPSubscriber(server *http.ServeMux, logger *slog.Logger) (eventmux.Subscription, error) {
 	sub, err := eventhttp.NewSubscriber(server, eventhttp.SubscriberConfig{
 		Pattern: "POST /command",
-		Logger:  logger.With(slog.String("logger", "http-subscriber")),
+		Logger:  logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("example: new http subscriber: %w", err)

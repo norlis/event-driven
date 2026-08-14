@@ -36,7 +36,17 @@ func NewMessageWithoutAck(ce cloudevents.Event) *Message {
 // NewMessage wraps a CloudEvent with broker-level ack and nack callbacks.
 // The callbacks are de-duplicated: only the first Ack or Nack fires.
 func NewMessage(ce cloudevents.Event, ackFn, nackFn func()) *Message {
-	ctx, cancel := context.WithCancel(context.Background())
+	return NewMessageWithParent(context.Background(), ce, ackFn, nackFn)
+}
+
+// NewMessageWithParent is NewMessage with an explicit parent context, so
+// transports can seed per-message values (e.g. the W3C trace context) that
+// the router and handlers then read via Message.Context().
+func NewMessageWithParent(parent context.Context, ce cloudevents.Event, ackFn, nackFn func()) *Message {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
 	return &Message{
 		Event:  ce,
 		ack:    ackFn,

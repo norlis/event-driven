@@ -44,7 +44,7 @@ func (h *handler) Execute(ctx context.Context, evt Person) (json.RawMessage, err
 	if store, ok := metadata.FromContext(ctx); ok {
 		store.Set("eventName", "execute")
 	}
-	h.logger.Info("Processing Pub/Sub event", slog.Any("event", evt))
+	h.logger.InfoContext(ctx, "pubsub event processed")
 	return json.Marshal(evt) //nolint:wrapcheck
 }
 
@@ -53,7 +53,7 @@ func (h *handler) Command(ctx context.Context, evt Person) (json.RawMessage, err
 		store.Set("eventName", "command")
 		store.Set("name", evt.Name)
 	}
-	h.logger.Info("Processing HTTP command", slog.Any("event", evt))
+	h.logger.InfoContext(ctx, "http command processed")
 	data, err := json.Marshal(evt)
 	if err != nil {
 		return nil, fmt.Errorf("marshal person: %w", err)

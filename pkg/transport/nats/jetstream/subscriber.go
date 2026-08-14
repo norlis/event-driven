@@ -9,7 +9,11 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/norlis/httpgate/logging"
+	"github.com/norlis/httpgate/trace"
+
 	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/transport/nats/codec"
 )
 
@@ -79,6 +83,11 @@ func NewSubscriber(js jetstream.JetStream, cfg SubscriberConfig, logger *slog.Lo
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "jetstream-subscriber"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemNATS),
+		slog.String(logfields.KeyMessagingDestination, cfg.Stream),
+	)
 	return &Subscriber{js: js, cfg: cfg, logger: logger}, nil
 }
 
@@ -122,11 +131,13 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	cc, err := cons.Consume(func(msg jetstream.Msg) {
 		ce, uerr := s.cfg.Unmarshaler.Unmarshal(msg.Headers(), msg.Data())
 		if uerr != nil {
-			s.logger.Error("JetStream unmarshal failed", slog.Any("error", uerr))
+			s.logger.Error("message unmarshal failed", logging.Err(uerr))
 			_ = msg.Nak() // redeliver; MaxDeliver routes poison messages to DLQ out-of-band
 			return
 		}
-		handler(event.NewMessage(
+		msgCtx := event.ContextWithTrace(context.Background(), msg.Headers().Get(trace.Header), &ce)
+		handler(event.NewMessageWithParent(
+			msgCtx,
 			ce,
 			func() { _ = msg.Ack() },
 			func() {
@@ -144,13 +155,11 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	defer cc.Stop()
 
 	s.logger.Info(
-		"JetStream subscription started (fan-out)",
-		slog.String("stream", s.cfg.Stream),
-		slog.String("filterSubject", s.cfg.FilterSubject),
-		slog.Int("maxOutstandingMessages", s.cfg.MaxOutstandingMessages),
+		"subscription started",
+		slog.String(logfields.KeyNATSFilterSubject, s.cfg.FilterSubject),
+		slog.Int(logfields.KeyConsumerMaxOutstanding, s.cfg.MaxOutstandingMessages),
 	)
-
 	<-ctx.Done()
-	s.logger.Info("JetStream subscription stopped", slog.String("stream", s.cfg.Stream))
+	s.logger.Info("subscription stopped")
 	return nil
 }

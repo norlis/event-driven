@@ -8,7 +8,10 @@ import (
 
 	gojmespath "github.com/jmespath/go-jmespath"
 
+	"github.com/norlis/httpgate/logging"
+
 	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 )
 
 // Filter matches messages whose JSON-decoded body satisfies a JMESPath
@@ -24,41 +27,38 @@ func New(expr string, logger *slog.Logger) *Filter {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "jmespath-filter"),
+		slog.String(logfields.KeyFilterExpression, expr),
+	)
 	return &Filter{expr: expr, logger: logger}
 }
 
-// Match implements eventmux.Filter. Returns false on decode/evaluation errors
-// and logs them at error level.
+// Match implements eventmux.Filter. Returns false on decode/evaluation
+// errors or a non-boolean result: these are per-message failures treated as
+// "no match" — the filter keeps functioning, so they are logged at WARN
+// rather than ERROR.
 func (f *Filter) Match(msg *event.Message) bool {
 	var data map[string]any
 	if err := json.Unmarshal(msg.Data(), &data); err != nil {
-		f.logger.Error(
-			"Filter: failed to decode JSON",
-			slog.Any("error", err),
-			slog.String("id", msg.ID()),
-		)
+		f.logger.WarnContext(msg.Context(), "filter payload decode failed",
+			logging.Err(err),
+			slog.String(logfields.KeyMessagingMessageID, msg.ID()))
 		return false
 	}
 
 	res, err := gojmespath.Search(f.expr, data)
 	if err != nil {
-		f.logger.Error(
-			"Filter: expression evaluation error",
-			slog.Any("error", err),
-			slog.String("expression", f.expr),
-			slog.String("id", msg.ID()),
-		)
+		f.logger.WarnContext(msg.Context(), "filter evaluation failed",
+			logging.Err(err),
+			slog.String(logfields.KeyMessagingMessageID, msg.ID()))
 		return false
 	}
 
 	match, ok := res.(bool)
 	if !ok {
-		f.logger.Warn(
-			"Filter: expression result is not boolean",
-			slog.Any("result", res),
-			slog.String("expression", f.expr),
-			slog.String("id", msg.ID()),
-		)
+		f.logger.WarnContext(msg.Context(), "filter result not boolean",
+			slog.String(logfields.KeyMessagingMessageID, msg.ID()))
 		return false
 	}
 	return match

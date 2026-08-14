@@ -13,25 +13,23 @@ import (
 const defaultStopTimeout = 30 * time.Second
 
 // Bind hooks a Mux into the FX lifecycle.
-// On a fatal mux error, it triggers fx.Shutdowner to restart the pod.
+// On a fatal mux error, it triggers fx.Shutdowner to restart the pod. It does
+// not log the mux lifecycle — the Mux logs its own start/stop/failure — so the
+// logger parameter is kept only for API stability of consumers' wiring.
 func Bind(lc fx.Lifecycle, mux *eventmux.Mux, logger *slog.Logger, shutdown fx.Shutdowner) {
+	_ = logger
 	var stop func(time.Duration) error
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			logger.Info("Starting Mux...", slog.String("name", mux.Name()))
 			stop = mux.RunBackground(context.Background(), func(err error) {
-				logger.Error(
-					"Mux crashed, requesting app shutdown",
-					slog.String("name", mux.Name()),
-					slog.Any("error", err),
-				)
+				// The mux already logged "mux run failed"; logging here again
+				// would duplicate the same error (§2.5 rule 1).
 				_ = shutdown.Shutdown(fx.ExitCode(1))
 			})
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			logger.Info("Stopping Mux...", slog.String("name", mux.Name()))
 			if stop != nil {
 				return stop(defaultStopTimeout)
 			}

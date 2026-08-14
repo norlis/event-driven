@@ -10,8 +10,13 @@ import (
 	"log/slog"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
+	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/norlis/httpgate/trace"
+
+	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/transport/nats/codec"
 )
 
@@ -56,14 +61,27 @@ func NewPublisher(js jetstream.JetStream, cfg PublisherConfig, logger *slog.Logg
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "jetstream-publisher"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemNATS),
+		slog.String(logfields.KeyMessagingDestination, cfg.Subject),
+	)
 	return &Publisher{js: js, cfg: cfg, logger: logger}, nil
 }
 
 // Publish sends ce to the configured subject.
-func (p *Publisher) Publish(ce cloudevents.Event) error {
+func (p *Publisher) Publish(ctx context.Context, ce cloudevents.Event) error {
+	tc, hasTrace := event.InjectTraceFromContext(ctx, &ce)
+
 	msg, err := p.cfg.Marshaler.Marshal(p.cfg.Subject, ce)
 	if err != nil {
 		return fmt.Errorf("jetstream publish marshal: %w", err)
+	}
+	if hasTrace {
+		if msg.Header == nil {
+			msg.Header = natsgo.Header{}
+		}
+		msg.Header.Set(trace.Header, tc.Traceparent())
 	}
 
 	opts := append([]jetstream.PublishOpt(nil), p.cfg.PublishOpts...)
@@ -71,18 +89,10 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 		opts = append(opts, jetstream.WithMsgID(ce.ID()))
 	}
 
-	ctx := context.Background()
-
 	if p.cfg.AckAsync {
 		// Only submission (setup) errors are returned here; server ack/failure
 		// is observed via the caller's async error handler (see AckAsync docs).
 		if _, err := p.js.PublishMsgAsync(msg, opts...); err != nil {
-			p.logger.Error(
-				"failed to publish (async) to JetStream",
-				slog.Any("error", err),
-				slog.String("subject", p.cfg.Subject),
-				slog.String("originalID", ce.ID()),
-			)
 			return fmt.Errorf("jetstream publish async: %w", err)
 		}
 		return nil
@@ -90,20 +100,14 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 
 	ack, err := p.js.PublishMsg(ctx, msg, opts...)
 	if err != nil {
-		p.logger.Error(
-			"failed to publish to JetStream",
-			slog.Any("error", err),
-			slog.String("subject", p.cfg.Subject),
-			slog.String("originalID", ce.ID()),
-		)
 		return fmt.Errorf("jetstream publish: %w", err)
 	}
-	p.logger.Debug(
-		"message published to JetStream",
-		slog.String("subject", p.cfg.Subject),
-		slog.String("stream", ack.Stream),
-		slog.Uint64("seq", ack.Sequence),
-		slog.String("originalID", ce.ID()),
+	p.logger.DebugContext(
+		ctx,
+		"event published",
+		slog.String(logfields.KeyNATSStream, ack.Stream),
+		slog.Uint64(logfields.KeyNATSSequence, ack.Sequence),
+		slog.String(logfields.KeyMessagingMessageID, ce.ID()),
 	)
 	return nil
 }

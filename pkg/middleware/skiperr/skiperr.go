@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/norlis/httpgate/logging"
+
 	"github.com/norlis/event-driven/pkg/eventmux"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 )
 
 // Predicate decides whether a handler error should be swallowed. Description
@@ -29,9 +32,12 @@ type Skipper struct {
 
 // New creates a new Skipper middleware.
 func New(logger *slog.Logger, predicates ...Predicate) Skipper {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	return Skipper{
 		predicates: predicates,
-		logger:     logger.With(slog.String("logger", "ignore-errors")),
+		logger:     logger.With(slog.String(logfields.KeyLogLogger, "skiperr")),
 	}
 }
 
@@ -49,11 +55,15 @@ func (i Skipper) Middleware(next eventmux.HandlerFunc) eventmux.HandlerFunc {
 		if err != nil {
 			for _, predicate := range i.predicates {
 				if predicate.Matches(err) {
+					// Skipper is exported with unexported fields, so a caller can
+					// still build a zero-value Skipper{} without going through New,
+					// leaving logger nil; New's guard alone can't cover that path.
 					if i.logger != nil {
-						i.logger.Info(
-							"Skipper: error ignored by predicate",
-							slog.Any("error", err),
-							slog.String("predicate", predicate.Description),
+						i.logger.InfoContext(
+							ctx,
+							"error skipped",
+							logging.Err(err),
+							slog.String(logfields.KeyPredicate, predicate.Description),
 						)
 					}
 					return result, nil

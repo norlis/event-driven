@@ -12,8 +12,11 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	"github.com/google/uuid"
 
+	"github.com/norlis/httpgate/logging"
+
 	"github.com/norlis/event-driven/pkg/event"
 	"github.com/norlis/event-driven/pkg/eventmux/metadata"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 )
 
 var noopHandler = func(ctx context.Context, data any) (json.RawMessage, error) { return nil, nil }
@@ -60,9 +63,12 @@ func New(cfg Config) *Mux {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Mux{
-		cfg: cfg,
-	}
+	mux := &Mux{cfg: cfg}
+	mux.cfg.Logger = cfg.Logger.With(
+		slog.String(logfields.KeyLogLogger, "eventmux"),
+		slog.String(logfields.KeyMuxName, mux.Name()),
+	)
+	return mux
 }
 
 // Name returns the mux name for logging. Defaults to "eventmux" if not configured.
@@ -90,10 +96,9 @@ func (mux *Mux) RunBackground(parentCtx context.Context, onError OnErrorFunc) (s
 
 		if err != nil && !errors.Is(err, context.Canceled) {
 			mux.cfg.Logger.Error(
-				"Mux crashed",
-				slog.Any("error", err),
-				slog.String("name", mux.Name()),
-				slog.Any("cause", context.Cause(ctx)),
+				"mux run failed",
+				logging.Err(err),
+				slog.String(logfields.KeyMuxStopCause, stopCause(ctx)),
 			)
 			if onError != nil {
 				onError(err)
@@ -102,9 +107,8 @@ func (mux *Mux) RunBackground(parentCtx context.Context, onError OnErrorFunc) (s
 		}
 
 		mux.cfg.Logger.Info(
-			"Mux stopped",
-			slog.String("name", mux.Name()),
-			slog.Any("cause", context.Cause(ctx)),
+			"mux stopped",
+			slog.String(logfields.KeyMuxStopCause, stopCause(ctx)),
 		)
 	}()
 
@@ -127,19 +131,21 @@ func (mux *Mux) Register(pub Publisher, filter Filter, objectType any, handler H
 		Handler:    handler,
 		ObjectType: objectType,
 	})
-	mux.cfg.Logger.Info("Route registered", slog.Int("totalRoutes", len(mux.routes)))
+	mux.cfg.Logger.Info("route registered", slog.Int(logfields.KeyMuxRoutesTotal, len(mux.routes)))
 }
 
 // Run starts the Subscription and processes all registered routes.
 func (mux *Mux) Run(ctx context.Context) error {
-	mux.cfg.Logger.Info("Mux starting subscription...")
+	mux.cfg.Logger.Info("mux started")
 
 	if err := mux.cfg.Subscription.Start(ctx, func(msg *event.Message) {
-		mux.cfg.Logger.Debug(
-			"Mux received message",
-			slog.String("id", msg.ID()),
-			slog.String("type", msg.Type()),
-			slog.String("source", msg.Source()),
+		start := time.Now()
+		mux.cfg.Logger.DebugContext(
+			msg.Context(),
+			"message received",
+			slog.String(logfields.KeyMessagingMessageID, msg.ID()),
+			slog.String(logfields.KeyCloudEventsType, msg.Type()),
+			slog.String(logfields.KeyCloudEventsSource, msg.Source()),
 		)
 
 		matchingRoute := mux.findMatchingRoute(msg)
@@ -147,9 +153,7 @@ func (mux *Mux) Run(ctx context.Context) error {
 			mux.handleNoRouteFound(msg)
 			return
 		}
-
-		mux.cfg.Logger.Debug("Message matched filter, processing route...", slog.String("id", msg.ID()))
-		mux.processAndHandle(msg, matchingRoute)
+		mux.processAndHandle(msg, matchingRoute, start)
 	}); err != nil {
 		return fmt.Errorf("subscription start: %w", err)
 	}
@@ -166,21 +170,24 @@ func (mux *Mux) findMatchingRoute(msg *event.Message) *Route {
 }
 
 func (mux *Mux) handleNoRouteFound(msg *event.Message) {
-	mux.cfg.Logger.Debug("Message did not match any route", slog.String("id", msg.ID()))
+	mux.cfg.Logger.DebugContext(msg.Context(), "no route matched",
+		slog.String(logfields.KeyMessagingMessageID, msg.ID()))
 	if mux.cfg.ReportOnNoMatch {
 		msg.NotifyPreflightDone(event.ErrNoRoute)
 	}
 	msg.Ack()
 }
 
-func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
+func (mux *Mux) processAndHandle(msg *event.Message, rt *Route, start time.Time) {
 	eventPayload, err := decodeInto(reflect.TypeOf(rt.ObjectType), msg.Data())
 	if err != nil {
-		mux.cfg.Logger.Error(
-			"Failed to unmarshal payload",
-			slog.Any("error", err),
-			slog.String("id", msg.ID()),
-			slog.String("targetType", reflect.TypeOf(rt.ObjectType).String()),
+		mux.cfg.Logger.ErrorContext(
+			msg.Context(),
+			"payload decode failed",
+			logging.Err(err),
+			slog.String(logfields.KeyMessagingMessageID, msg.ID()),
+			slog.String(logfields.KeyPayloadType, reflect.TypeOf(rt.ObjectType).String()),
+			slog.String(logfields.KeyMessagingOutcome, logfields.OutcomeNacked),
 		)
 		msg.NotifyPreflightDone(err)
 		msg.Nack()
@@ -188,7 +195,16 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 	}
 
 	preflightChain := Chain(noopHandler, mux.preflightMiddlewares...)
-	if _, preflightErr := preflightChain(context.Background(), eventPayload); preflightErr != nil {
+	if _, preflightErr := preflightChain(msg.Context(), eventPayload); preflightErr != nil {
+		// Single log for preflight/validation failures: the middlewares
+		// propagate enriched errors and never log (§2.5 anti-duplicity).
+		mux.cfg.Logger.WarnContext(
+			msg.Context(),
+			"preflight failed",
+			logging.Err(preflightErr),
+			slog.String(logfields.KeyMessagingMessageID, msg.ID()),
+			slog.String(logfields.KeyMessagingOutcome, logfields.OutcomeNacked),
+		)
 		msg.NotifyPreflightDone(preflightErr)
 		msg.Nack()
 		return
@@ -203,22 +219,26 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 
 	data, err := effectiveHandler(handlerCtx, eventPayload)
 	if err != nil {
-		mux.cfg.Logger.Error(
-			"Handler execution failed",
-			slog.Any("error", err),
-			slog.String("id", msg.ID()),
-		)
-
-		// NonRetryableError → Ack (discard). Retrying won't fix it (e.g. validation, bad payload).
-		// Retryable error → Nack. The broker will redeliver with its own backoff/DLQ policy.
+		// Exactly one log per failed message, level by outcome:
+		// NonRetryableError → Ack (discard): a definitively lost write.
+		// Retryable → Nack: the broker redelivers with its own backoff/DLQ policy.
 		if _, ok := errors.AsType[*event.NonRetryableError](err); ok {
-			mux.cfg.Logger.Warn(
-				"Non-retryable error, discarding message",
-				slog.Any("error", err),
-				slog.String("id", msg.ID()),
+			mux.cfg.Logger.ErrorContext(
+				handlerCtx,
+				"message discarded",
+				logging.Err(err),
+				slog.String(logfields.KeyMessagingMessageID, msg.ID()),
+				slog.String(logfields.KeyMessagingOutcome, logfields.OutcomeDiscarded),
 			)
 			msg.Ack()
 		} else {
+			mux.cfg.Logger.ErrorContext(
+				handlerCtx,
+				"message handling failed",
+				logging.Err(err),
+				slog.String(logfields.KeyMessagingMessageID, msg.ID()),
+				slog.String(logfields.KeyMessagingOutcome, logfields.OutcomeNacked),
+			)
 			msg.Nack()
 		}
 		return
@@ -226,12 +246,21 @@ func (mux *Mux) processAndHandle(msg *event.Message, rt *Route) {
 
 	msg.Ack()
 
+	// The single per-message completion log (§2.5 rule 2).
+	mux.cfg.Logger.InfoContext(
+		handlerCtx,
+		"message processed",
+		slog.String(logfields.KeyMessagingMessageID, msg.ID()),
+		slog.String(logfields.KeyMessagingOutcome, logfields.OutcomeAcked),
+		slog.Int64(logging.KeyEventDuration, time.Since(start).Nanoseconds()),
+	)
+
 	if rt.Pub != nil && data != nil {
-		mux.publishResult(msg, data, store, rt.Pub)
+		mux.publishResult(handlerCtx, msg, data, store, rt.Pub)
 	}
 }
 
-func (mux *Mux) publishResult(msg *event.Message, data json.RawMessage, store *metadata.Store, pub Publisher) {
+func (mux *Mux) publishResult(ctx context.Context, msg *event.Message, data json.RawMessage, store *metadata.Store, pub Publisher) {
 	ce := cloudevents.New()
 	ce.SetID(uuid.NewString())
 	ce.SetSource(msg.Source())
@@ -250,11 +279,14 @@ func (mux *Mux) publishResult(msg *event.Message, data json.RawMessage, store *m
 		}
 	}
 
-	if err := pub.Publish(ce); err != nil {
-		mux.cfg.Logger.Error(
-			"Failed to publish result",
-			slog.Any("error", err),
-			slog.String("id", msg.ID()),
+	// Ack() already cancelled the per-message context; WithoutCancel keeps its
+	// values (trace context) without inheriting the cancellation.
+	if err := pub.Publish(context.WithoutCancel(ctx), ce); err != nil {
+		mux.cfg.Logger.ErrorContext(
+			ctx,
+			"result publish failed",
+			logging.Err(err),
+			slog.String(logfields.KeyMessagingMessageID, msg.ID()),
 		)
 	}
 }
@@ -270,4 +302,13 @@ func (mux *Mux) Use(middlewares ...Middleware) {
 // failures while still allowing the message to be Nacked.
 func (mux *Mux) UsePreflight(middlewares ...Middleware) {
 	mux.preflightMiddlewares = append(mux.preflightMiddlewares, middlewares...)
+}
+
+// stopCause renders the context cancellation cause for logging; empty while
+// the context is still active.
+func stopCause(ctx context.Context) string {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause.Error()
+	}
+	return ""
 }

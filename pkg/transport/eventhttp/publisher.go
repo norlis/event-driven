@@ -8,6 +8,12 @@ import (
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	"resty.dev/v3"
+
+	"github.com/norlis/httpgate/logging"
+	"github.com/norlis/httpgate/trace"
+
+	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 )
 
 // TokenFunc returns an authentication token. Implementations should handle
@@ -62,6 +68,14 @@ func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
 	if tokenHeader == "" {
 		tokenHeader = "Authorization"
 	}
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "eventhttp-publisher"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemHTTP),
+		slog.String(logfields.KeyMessagingDestination, cfg.TargetURL),
+	)
 	return &Publisher{
 		cfg: cfg,
 		client: newClient(clientOpts{
@@ -77,8 +91,8 @@ func NewPublisher(cfg PublisherConfig, logger *slog.Logger) *Publisher {
 }
 
 // Publish sends ce to TargetURL using CloudEvents binary content mode.
-func (p *Publisher) Publish(ce cloudevents.Event) error {
-	ctx := context.Background()
+func (p *Publisher) Publish(ctx context.Context, ce cloudevents.Event) error {
+	tc, hasTrace := event.InjectTraceFromContext(ctx, &ce)
 
 	req := p.client.R().
 		SetContext(ctx).
@@ -102,6 +116,10 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 		}
 	}
 
+	if hasTrace {
+		req.SetHeader(trace.Header, tc.Traceparent())
+	}
+
 	if p.cfg.TokenProvider != nil {
 		token, err := p.cfg.TokenProvider(ctx)
 		if err != nil {
@@ -118,11 +136,12 @@ func (p *Publisher) Publish(ce cloudevents.Event) error {
 		return fmt.Errorf("http publisher: unexpected status %d from %s", resp.StatusCode(), p.cfg.TargetURL)
 	}
 
-	p.logger.Debug(
-		"CloudEvent published via HTTP",
-		slog.String("targetURL", p.cfg.TargetURL),
-		slog.String("ceId", ce.ID()),
-		slog.Int("status", resp.StatusCode()),
+	p.logger.DebugContext(
+		ctx,
+		"event published",
+		slog.String(logfields.KeyURLFull, p.cfg.TargetURL),
+		slog.String(logfields.KeyMessagingMessageID, ce.ID()),
+		slog.Int(logging.KeyHTTPResponseStatusCode, resp.StatusCode()),
 	)
 	return nil
 }
