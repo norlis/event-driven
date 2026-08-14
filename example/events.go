@@ -23,7 +23,7 @@ func RegisterEventHandlers(params EventParams, routers RouterParams, logger *slo
 	webhookPub := eventhttp.NewPublisher(eventhttp.PublisherConfig{
 		TargetURL: WebhookURL(),
 		Timeout:   5 * time.Second,
-	}, logger.With(slog.String("logger", "webhook-publisher")))
+	}, logger)
 
 	// ── HTTPMux (HTTP → handler) ────────────────────────────────────────
 
@@ -42,7 +42,7 @@ func RegisterEventHandlers(params EventParams, routers RouterParams, logger *slo
 		webhookPub,
 		cefilter.All(
 			cefilter.ByType("http.command.webhook"),
-			jmespath.New("contains(['webhook', 'pepe'], name)", logger.With(slog.String("logger", "jmes-http"))),
+			jmespath.New("contains(['webhook', 'pepe'], name)", logger),
 		),
 		Person{},
 		eventmux.Wrap(params.Handler.Command),

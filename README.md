@@ -12,7 +12,7 @@ A Go library for routing and processing events from multiple sources (Google Clo
 - **Middleware pipeline** — Recoverer, validation, error skipping, HTTP retry with jitter.
 - **Pluggable wire format** — `Marshaler` / `Unmarshaler` per transport for FIFO, structured-mode, custom envelopes, encryption, etc.
 - **Non-retryable errors** — `event.NonRetryableError` triggers Ack (discard) instead of Nack (redeliver).
-- **Structured logging** — `log/slog` across the entire library. No vendor logger dependency.
+- **Structured logging** — `log/slog` with the platform logging standard via [`httpgate/logging`](https://github.com/norlis/httpgate) (OTel field names, ISO 8601 UTC timestamps, structured `error.*` objects) and W3C `traceparent` propagation across every transport (HTTP headers, Pub/Sub / SQS / SNS message attributes, NATS headers, CloudEvents `traceparent` extension). See `docs/superpowers/specs/2026-08-12-logging-standard-design.md` for the field and message catalog.
 - **FX integration** — `pkg/kit/fxmux` plugs the mux + FX lifecycle hooks + slog-based fxevent logger.
 
 ## Installation

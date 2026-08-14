@@ -8,7 +8,11 @@ import (
 
 	natsgo "github.com/nats-io/nats.go"
 
+	"github.com/norlis/httpgate/logging"
+	"github.com/norlis/httpgate/trace"
+
 	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/transport/nats/codec"
 )
 
@@ -45,6 +49,11 @@ func NewSubscriber(nc *natsgo.Conn, cfg SubscriberConfig, logger *slog.Logger) (
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "nats-core-subscriber"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemNATS),
+		slog.String(logfields.KeyMessagingDestination, cfg.Subject),
+	)
 	return &Subscriber{nc: nc, cfg: cfg, logger: logger}, nil
 }
 
@@ -53,14 +62,12 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	cb := func(m *natsgo.Msg) {
 		ce, err := s.cfg.Unmarshaler.Unmarshal(m.Header, m.Data)
 		if err != nil {
-			s.logger.Error(
-				"NATS core unmarshal failed",
-				slog.Any("error", err),
-				slog.String("subject", m.Subject),
-			)
-			return // core has no redelivery; drop
+			// Core NATS has no redelivery; the message is definitively lost.
+			s.logger.Error("message unmarshal failed", logging.Err(err))
+			return
 		}
-		handler(event.NewMessageWithoutAck(ce))
+		msgCtx := event.ContextWithTrace(context.Background(), m.Header.Get(trace.Header), &ce)
+		handler(event.NewMessageWithParent(msgCtx, ce, nil, nil))
 	}
 
 	var (
@@ -76,17 +83,12 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 		return fmt.Errorf("core subscribe %q: %w", s.cfg.Subject, err)
 	}
 
-	s.logger.Info(
-		"NATS core subscription started",
-		slog.String("subject", s.cfg.Subject),
-		slog.String("queueGroup", s.cfg.QueueGroup),
-	)
-
+	s.logger.Info("subscription started",
+		slog.String(logfields.KeyConsumerGroup, s.cfg.QueueGroup))
 	<-ctx.Done()
-
 	if err := sub.Drain(); err != nil {
-		s.logger.Warn("NATS core drain failed", slog.Any("error", err))
+		s.logger.Warn("nats drain failed", logging.Err(err))
 	}
-	s.logger.Info("NATS core subscription stopped", slog.String("subject", s.cfg.Subject))
+	s.logger.Info("subscription stopped")
 	return nil
 }

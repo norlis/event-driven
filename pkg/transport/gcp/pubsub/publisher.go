@@ -7,6 +7,11 @@ import (
 
 	gpubsub "cloud.google.com/go/pubsub/v2"
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
+
+	"github.com/norlis/httpgate/trace"
+
+	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 )
 
 // PublisherConfig configures a Publisher.
@@ -36,6 +41,11 @@ func NewPublisher(client *gpubsub.Client, cfg PublisherConfig, logger *slog.Logg
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "pubsub-publisher"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemGCPPubSub),
+		slog.String(logfields.KeyMessagingDestination, cfg.TopicID),
+	)
 	return &Publisher{
 		client: client,
 		cfg:    cfg,
@@ -44,32 +54,35 @@ func NewPublisher(client *gpubsub.Client, cfg PublisherConfig, logger *slog.Logg
 }
 
 // Publish sends ce to the configured topic.
-func (p *Publisher) Publish(ce cloudevents.Event) error {
+func (p *Publisher) Publish(ctx context.Context, ce cloudevents.Event) error {
+	tc, hasTrace := event.InjectTraceFromContext(ctx, &ce)
+
 	msg, err := p.cfg.Marshaler.Marshal(ce)
 	if err != nil {
 		return fmt.Errorf("pubsub marshal: %w", err)
 	}
+	if hasTrace {
+		if msg.Attributes == nil {
+			msg.Attributes = map[string]string{}
+		}
+		msg.Attributes[trace.Header] = tc.Traceparent()
+	}
 
-	ctx := context.Background()
 	publisher := p.client.Publisher(p.cfg.TopicID)
 	defer publisher.Stop()
 
 	result := publisher.Publish(ctx, msg)
 	id, err := result.Get(ctx)
 	if err != nil {
-		p.logger.Error(
-			"Failed to publish message to Pub/Sub",
-			slog.Any("error", err),
-			slog.String("topicID", p.cfg.TopicID),
-			slog.String("originalID", ce.ID()),
-		)
+		// No log here: the caller (mux publishResult or the consuming service)
+		// owns the single error log for this operation.
 		return fmt.Errorf("pubsub publish: %w", err)
 	}
-	p.logger.Debug(
-		"Message published to Pub/Sub",
-		slog.String("topicID", p.cfg.TopicID),
-		slog.String("publishedID", id),
-		slog.String("originalID", ce.ID()),
+	p.logger.DebugContext(
+		ctx,
+		"event published",
+		slog.String(logfields.KeyMessagingBrokerID, id),
+		slog.String(logfields.KeyMessagingMessageID, ce.ID()),
 	)
 	return nil
 }

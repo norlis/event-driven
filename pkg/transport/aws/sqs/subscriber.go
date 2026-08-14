@@ -34,7 +34,11 @@ import (
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
+	"github.com/norlis/httpgate/logging"
+	"github.com/norlis/httpgate/trace"
+
 	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/transport/aws"
 )
 
@@ -143,6 +147,11 @@ func NewSubscriber(client *awssqs.Client, cfg SubscriberConfig, logger *slog.Log
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	// The queue URL is resolved later in Start, so destination is attached there.
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "sqs-subscriber"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemAWSSQS),
+	)
 
 	return &Subscriber{
 		client:  client,
@@ -163,19 +172,20 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 		return err
 	}
 
-	s.logger.Info(
-		"Starting SQS subscriber",
-		slog.String("queueURL", string(url)),
-		slog.Int("workers", s.cfg.ConsumeWorkers),
-	)
+	// Scoped locally rather than assigned back to s.logger: Start may run
+	// concurrently with the workers it spawns, and a shared field would race
+	// on repeated or concurrent Start calls.
+	logger := s.logger.With(slog.String(logfields.KeyMessagingDestination, string(url)))
+	logger.Info("subscription started",
+		slog.Int(logfields.KeyConsumerWorkers, s.cfg.ConsumeWorkers))
 
 	for range s.cfg.ConsumeWorkers {
 		s.wg.Add(1)
-		go s.worker(ctx, url, handler)
+		go s.worker(ctx, logger, url, handler)
 	}
 
 	s.wg.Wait()
-	s.logger.Info("SQS subscriber stopped", slog.String("queueURL", string(url)))
+	logger.Info("subscription stopped")
 	return nil
 }
 
@@ -187,7 +197,7 @@ func (s *Subscriber) Close() error {
 	return nil
 }
 
-func (s *Subscriber) worker(ctx context.Context, url QueueURL, handler func(msg *event.Message)) {
+func (s *Subscriber) worker(ctx context.Context, logger *slog.Logger, url QueueURL, handler func(msg *event.Message)) {
 	defer s.wg.Done()
 
 	for {
@@ -199,7 +209,7 @@ func (s *Subscriber) worker(ctx context.Context, url QueueURL, handler func(msg 
 		default:
 		}
 
-		sleep := s.receiveBatch(ctx, url, handler)
+		sleep := s.receiveBatch(ctx, logger, url, handler)
 		if sleep == NoSleep {
 			continue
 		}
@@ -217,18 +227,16 @@ func (s *Subscriber) worker(ctx context.Context, url QueueURL, handler func(msg 
 // receiveBatch performs one ReceiveMessage round-trip and dispatches each
 // message. Returns NoSleep when the loop should immediately retry, otherwise
 // the duration to back off before the next iteration.
-func (s *Subscriber) receiveBatch(ctx context.Context, url QueueURL, handler func(msg *event.Message)) time.Duration {
+func (s *Subscriber) receiveBatch(ctx context.Context, logger *slog.Logger, url QueueURL, handler func(msg *event.Message)) time.Duration {
 	input := s.cfg.GenerateReceiveMessageInput(url)
 	out, err := s.client.ReceiveMessage(ctx, input)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return NoSleep
 		}
-		s.logger.Error(
-			"SQS ReceiveMessage failed",
-			slog.Any("error", err),
-			slog.String("queueURL", string(url)),
-		)
+		// Retried after backoff below; the consumer keeps running, so this is
+		// a warning, not an error.
+		logger.Warn("subscription receive failed", logging.Err(err))
 		return s.cfg.ReconnectRetrySleep
 	}
 	if len(out.Messages) == 0 {
@@ -236,18 +244,18 @@ func (s *Subscriber) receiveBatch(ctx context.Context, url QueueURL, handler fun
 	}
 
 	for i := range out.Messages {
-		s.processMessage(ctx, url, &out.Messages[i], handler)
+		s.processMessage(ctx, logger, url, &out.Messages[i], handler)
 	}
 	return NoSleep
 }
 
-func (s *Subscriber) processMessage(ctx context.Context, url QueueURL, m *sqstypes.Message, handler func(msg *event.Message)) {
+func (s *Subscriber) processMessage(ctx context.Context, logger *slog.Logger, url QueueURL, m *sqstypes.Message, handler func(msg *event.Message)) {
 	ce, err := s.cfg.Unmarshaler.Unmarshal(m)
 	if err != nil {
-		s.logger.Error(
-			"SQS unmarshal failed",
-			slog.Any("error", err),
-			slog.String("messageID", awssdk.ToString(m.MessageId)),
+		logger.Error(
+			"message unmarshal failed",
+			logging.Err(err),
+			slog.String(logfields.KeyMessagingBrokerID, awssdk.ToString(m.MessageId)),
 		)
 		// Leave the message: visibility timeout will redeliver.
 		return
@@ -256,29 +264,30 @@ func (s *Subscriber) processMessage(ctx context.Context, url QueueURL, m *sqstyp
 	receiptHandle := awssdk.ToString(m.ReceiptHandle)
 	messageID := awssdk.ToString(m.MessageId)
 
-	ack := func() { s.deleteMessage(ctx, url, receiptHandle, messageID) }
+	var traceparent string
+	if attr, ok := m.MessageAttributes[trace.Header]; ok {
+		traceparent = awssdk.ToString(attr.StringValue)
+	}
+	msgCtx := event.ContextWithTrace(context.Background(), traceparent, &ce)
+
+	ack := func() { s.deleteMessage(ctx, logger, url, receiptHandle, messageID) }
 	nack := func() {
 		// No-op: not calling DeleteMessage lets the visibility timeout expire
 		// and SQS redeliver.
 	}
 
-	s.logger.Debug(
-		"SQS message received",
-		slog.String("messageID", messageID),
-		slog.String("queueURL", string(url)),
-	)
-
-	handler(event.NewMessage(ce, ack, nack))
+	handler(event.NewMessageWithParent(msgCtx, ce, ack, nack))
 }
 
-func (s *Subscriber) deleteMessage(ctx context.Context, url QueueURL, receiptHandle, messageID string) {
+func (s *Subscriber) deleteMessage(ctx context.Context, logger *slog.Logger, url QueueURL, receiptHandle, messageID string) {
 	input := s.cfg.GenerateDeleteMessageInput(url, receiptHandle)
 	if _, err := s.client.DeleteMessage(ctx, input); err != nil {
-		s.logger.Error(
-			"SQS DeleteMessage failed",
-			slog.Any("error", err),
-			slog.String("messageID", messageID),
-			slog.String("queueURL", string(url)),
+		// The delete IS the ack: its failure means an already-processed
+		// message will be redelivered.
+		logger.Error(
+			"message ack failed",
+			logging.Err(err),
+			slog.String(logfields.KeyMessagingBrokerID, messageID),
 		)
 	}
 }

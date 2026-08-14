@@ -12,8 +12,12 @@ import (
 	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"github.com/google/uuid"
 
+	"github.com/norlis/httpgate/logging"
+	"github.com/norlis/httpgate/trace"
+
 	"github.com/norlis/event-driven/pkg/event"
 	"github.com/norlis/event-driven/pkg/eventmux"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 )
 
 // SubscriberConfig configures the HTTP subscriber. Pattern is the
@@ -34,10 +38,19 @@ type Subscriber struct {
 
 // NewSubscriber registers the HTTP handler under cfg.Pattern.
 func NewSubscriber(server *http.ServeMux, cfg SubscriberConfig) (eventmux.Subscription, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "eventhttp-subscriber"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemHTTP),
+		slog.String(logfields.KeyMessagingDestination, cfg.Pattern),
+	)
 	return &Subscriber{
 		server:         server,
 		config:         cfg,
-		logger:         cfg.Logger,
+		logger:         logger,
 		errorResponder: NewErrorResponder(),
 	}, nil
 }
@@ -48,12 +61,9 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 	return func(w http.ResponseWriter, r *http.Request) {
 		ce, err := h.extractCloudEvent(r)
 		if err != nil {
+			// Malformed client input is expected behavior, not a system fault.
+			h.logger.WarnContext(r.Context(), "cloudevent extraction failed", logging.Err(err))
 			messageID := uuid.NewString()
-			h.logger.Error(
-				"Failed to extract CloudEvent from request",
-				slog.Any("error", err),
-				slog.String("path", h.config.Pattern),
-			)
 			NewResponseBuilder().
 				WithID(messageID, uuid.New().String(), uuid.New().String()).
 				WithInstance(r.Pattern).
@@ -65,14 +75,10 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 		}
 
 		messageID := ce.ID()
-		h.logger.Debug(
-			"Received HTTP message",
-			slog.String("id", messageID),
-			slog.Int("payloadSize", len(ce.Data())),
-			slog.String("path", h.config.Pattern),
-		)
-
-		msg := event.NewMessageWithoutAck(*ce)
+		// This transport is the trace entry point: extract traceparent from
+		// the inbound request, or seed a new trace when absent.
+		msgCtx := event.ContextWithTrace(r.Context(), r.Header.Get(trace.Header), ce)
+		msg := event.NewMessageWithParent(msgCtx, *ce, nil, nil)
 		preflightResultChan := make(chan error, 1)
 		msg.SetPreflightCallback(func(err error) {
 			preflightResultChan <- err
@@ -83,12 +89,13 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 		select {
 		case err = <-preflightResultChan:
 			if err != nil {
-				if h.errorResponder.Respond(w, r, err, h.logger, messageID) {
+				if h.errorResponder.Respond(w, r, err, messageID) {
 					return
 				}
 			}
 		case <-time.After(5 * time.Second):
-			h.logger.Error("Timeout waiting for router preflight result", slog.String("id", messageID))
+			h.logger.ErrorContext(msgCtx, "preflight result timed out",
+				slog.String(logfields.KeyMessagingMessageID, messageID))
 			NewResponseBuilder().
 				WithID(messageID, uuid.New().String(), uuid.New().String()).
 				WithError("Internal processing timeout", "TIMEOUT").
@@ -142,9 +149,9 @@ func (h *Subscriber) extractCloudEvent(r *http.Request) (*cloudevents.Event, err
 // (Pub/Sub, NATS) and lets the parent Mux treat HTTP routes as long-lived
 // instead of reporting them as "stopped" immediately after Start returns.
 func (h *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)) error {
-	h.config.Logger.Info("Subscriber Start", slog.String("pattern", h.config.Pattern))
+	h.logger.Info("subscription started")
 	h.server.HandleFunc(h.config.Pattern, h.Handler(handler))
 	<-ctx.Done()
-	h.config.Logger.Info("Subscriber stopped", slog.String("pattern", h.config.Pattern))
+	h.logger.Info("subscription stopped")
 	return nil
 }

@@ -25,14 +25,19 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/norlis/httpgate/logging"
+
 	"github.com/norlis/event-driven/pkg/eventmux"
 	"github.com/norlis/event-driven/pkg/filter/cefilter"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/kit/signal"
 	"github.com/norlis/event-driven/pkg/middleware/recover"
 	"github.com/norlis/event-driven/pkg/middleware/validate"
@@ -46,7 +51,25 @@ const (
 	natsStream   = "EVENTS"
 	natsSubjects = "events.>"
 	subjectNS    = "events"
+
+	envLogLevel    = "LOG_LEVEL"       // "debug" or "info" (default)
+	envServiceName = "SERVICE_NAME"    // service.name (default "event-driven-nats-example")
+	envServiceVer  = "SERVICE_VERSION" // service.version (default "dev")
+	envEnvironment = "ENVIRONMENT"     // deployment.environment.name (default "local")
 )
+
+// errMuxFailed signals run() exiting because a mux crashed rather than a
+// clean OS-signal shutdown, so main() can exit non-zero and let a supervisor
+// restart the process.
+var errMuxFailed = errors.New("mux run failed")
+
+// getenvDefault returns the environment variable value, or fallback when unset.
+func getenvDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 // Person is the demo payload.
 type Person struct {
@@ -67,11 +90,33 @@ func (subjectFromType) Marshal(_ string, ce cloudevents.Event) (*natsgo.Msg, err
 	return msg, nil
 }
 
+// newLogger returns the platform-standard logger. DEBUG stays off unless
+// LOG_LEVEL=debug.
+func newLogger() *slog.Logger {
+	level := slog.LevelInfo
+	if strings.EqualFold(os.Getenv(envLogLevel), "debug") {
+		level = slog.LevelDebug
+	}
+	return logging.New(
+		os.Stdout,
+		logging.WithService(getenvDefault(envServiceName, "event-driven-nats-example"), getenvDefault(envServiceVer, "dev")),
+		logging.WithEnvironment(getenvDefault(envEnvironment, "local")),
+		logging.WithLevel(level),
+	)
+}
+
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := newLogger()
 
 	if err := run(logger); err != nil {
-		logger.Error("fatal", slog.Any("error", err))
+		if errors.Is(err, errMuxFailed) {
+			// A mux crash surfaces here long after startup succeeded; the mux
+			// already logged its own "mux run failed" record, this is the
+			// distinct process-level exit record.
+			logger.Error("app stopped after mux failure", logging.Err(err))
+		} else {
+			logger.Error("app start failed", logging.Err(err))
+		}
 		os.Exit(1)
 	}
 }
@@ -98,7 +143,7 @@ func run(logger *slog.Logger) error {
 	serveMux := http.NewServeMux()
 	httpSub, err := eventhttp.NewSubscriber(serveMux, eventhttp.SubscriberConfig{
 		Pattern: "POST /publish",
-		Logger:  logger.With(slog.String("logger", "http-subscriber")),
+		Logger:  logger,
 	})
 	if err != nil {
 		return fmt.Errorf("new http subscriber: %w", err)
@@ -107,28 +152,40 @@ func run(logger *slog.Logger) error {
 	httpMux := newHTTPMux(httpSub, pub, logger)
 	natsMux := newNatsMux(natsSub, logger)
 
-	onError := func(name string) eventmux.OnErrorFunc {
-		return func(err error) { logger.Error("mux crashed", slog.String("mux", name), slog.Any("error", err)) }
+	// A fatal mux error must not be silently tolerated: the mux already logs it
+	// (ERROR "mux run failed"), but without remediation the process would keep
+	// serving HTTP while never consuming NATS again, looking healthy to any
+	// orchestrator. Cancelling ctx unblocks run() below and drives the same
+	// graceful-shutdown path as an OS signal; the sentinel error then makes
+	// main() exit non-zero so a supervisor restarts the process.
+	var fatal atomic.Bool
+	onMuxFailure := func(error) {
+		fatal.Store(true)
+		stop()
 	}
-	stopHTTP := httpMux.RunBackground(ctx, onError("http-mux"))
-	stopNats := natsMux.RunBackground(ctx, onError("nats-mux"))
+	stopHTTP := httpMux.RunBackground(ctx, onMuxFailure)
+	stopNats := natsMux.RunBackground(ctx, onMuxFailure)
 
 	server := &http.Server{Addr: httpAddr, Handler: serveMux, ReadHeaderTimeout: 30 * time.Second}
 	go func() {
-		logger.Info("HTTP server listening", slog.String("addr", httpAddr))
+		logger.Info("http server started", slog.String(logfields.KeyServerAddress, httpAddr))
 		if serr := server.ListenAndServe(); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
-			logger.Error("HTTP server failed", slog.Any("error", serr))
+			logger.Error("http server failed", logging.Err(serr))
 		}
 	}()
 
 	<-ctx.Done()
-	logger.Info("shutting down...")
+	logger.Info("app stopping")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(shutdownCtx)
 	_ = stopHTTP(5 * time.Second)
 	_ = stopNats(5 * time.Second)
+
+	if fatal.Load() {
+		return errMuxFailed
+	}
 	return nil
 }
 
@@ -139,7 +196,7 @@ func dialNATS(logger *slog.Logger) (*natsgo.Conn, jetstream.JetStream, error) {
 	if url == "" {
 		url = natsgo.DefaultURL
 	}
-	logger.Info("connecting to NATS", slog.String("url", url))
+	logger.Info("nats connecting", slog.String(logfields.KeyServerAddress, url))
 
 	nc, err := natsgo.Connect(url, natsgo.Name("nats-example"), natsgo.MaxReconnects(-1))
 	if err != nil {
@@ -159,7 +216,7 @@ func newPublisher(js jetstream.JetStream, logger *slog.Logger) (eventmux.Publish
 	pub, err := natsjs.NewPublisher(js, natsjs.PublisherConfig{
 		Subject:   subjectNS, // overridden per-event by subjectFromType
 		Marshaler: subjectFromType{},
-	}, logger.With(slog.String("logger", "nats-publisher")))
+	}, logger)
 	if err != nil {
 		return nil, fmt.Errorf("new nats publisher: %w", err)
 	}
@@ -180,7 +237,7 @@ func newSubscriber(js jetstream.JetStream, logger *slog.Logger) (eventmux.Subscr
 			Retention: jetstream.LimitsPolicy,
 		},
 		MaxOutstandingMessages: 50,
-	}, logger.With(slog.String("logger", "nats-subscription")))
+	}, logger)
 	if err != nil {
 		return nil, fmt.Errorf("new nats subscriber: %w", err)
 	}
@@ -192,17 +249,17 @@ func newHTTPMux(httpSub eventmux.Subscription, pub eventmux.Publisher, logger *s
 	mux := eventmux.New(eventmux.Config{
 		Name:            "http-mux",
 		Subscription:    httpSub,
-		Logger:          logger.With(slog.String("logger", "http-mux")),
+		Logger:          logger,
 		ReportOnNoMatch: true,
 	})
 	mux.Use(recover.Middleware)
-	mux.UsePreflight(validate.New(logger))
+	mux.UsePreflight(validate.New())
 	mux.Register(
 		pub,
 		cefilter.ByType("http.command.nats"),
 		Person{},
-		eventmux.Wrap(func(_ context.Context, p Person) (json.RawMessage, error) {
-			logger.Info("HTTP command received, publishing to NATS", slog.Any("event", p))
+		eventmux.Wrap(func(ctx context.Context, p Person) (json.RawMessage, error) {
+			logger.InfoContext(ctx, "http command published to nats")
 			data, err := json.Marshal(p)
 			if err != nil {
 				return nil, fmt.Errorf("marshal person: %w", err)
@@ -218,15 +275,15 @@ func newNatsMux(sub eventmux.Subscription, logger *slog.Logger) *eventmux.Mux {
 	mux := eventmux.New(eventmux.Config{
 		Name:         "nats-mux",
 		Subscription: sub,
-		Logger:       logger.With(slog.String("logger", "nats-mux")),
+		Logger:       logger,
 	})
 	mux.Use(recover.Middleware)
 	mux.Register(
 		nil, // terminal: log only, no republish
 		cefilter.ByType("http.command.nats.result"),
 		Person{},
-		eventmux.Wrap(func(_ context.Context, p Person) (json.RawMessage, error) {
-			logger.Info("Received event from NATS", slog.Any("event", p))
+		eventmux.Wrap(func(ctx context.Context, p Person) (json.RawMessage, error) {
+			logger.InfoContext(ctx, "nats event received")
 			return nil, nil
 		}),
 	)

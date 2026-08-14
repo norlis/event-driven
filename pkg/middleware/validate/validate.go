@@ -5,7 +5,6 @@ package validate
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 
 	"github.com/go-playground/validator/v10"
 
@@ -23,19 +22,14 @@ func (v Error) Error() string {
 }
 
 // New returns a middleware that validates the decoded payload using
-// go-playground/validator struct tags.
-func New(logger *slog.Logger) eventmux.Middleware {
+// go-playground/validator struct tags. Validation failures are not logged
+// here: the error propagates enriched (validate.Error) and the router emits
+// the single "preflight failed" record.
+func New() eventmux.Middleware {
 	v := validator.New()
-	log := logger.With(slog.String("logger", "validation-middleware"))
-
 	return func(next eventmux.HandlerFunc) eventmux.HandlerFunc {
 		return func(ctx context.Context, data any) (json.RawMessage, error) {
 			if err := v.Struct(data); err != nil {
-				log.Warn(
-					"Input validation failed",
-					slog.Any("data", data),
-					slog.Any("error", err),
-				)
 				return nil, Error{OriginalError: err}
 			}
 			return next(ctx, data)

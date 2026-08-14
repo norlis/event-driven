@@ -14,8 +14,10 @@ type Filter interface {
 }
 
 // Publisher sends a CloudEvent to a downstream transport (Pub/Sub, SNS, HTTP, …).
+// Implementations must honor ctx for cancellation/deadline of the outbound I/O
+// and read the W3C trace context from it for propagation.
 type Publisher interface {
-	Publish(cloudevents.Event) error
+	Publish(ctx context.Context, ce cloudevents.Event) error
 }
 
 // Subscription is a long-running source of CloudEvents. Start must block

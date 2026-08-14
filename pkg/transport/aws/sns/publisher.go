@@ -29,8 +29,13 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	awssns "github.com/aws/aws-sdk-go-v2/service/sns"
+	snstypes "github.com/aws/aws-sdk-go-v2/service/sns/types"
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 
+	"github.com/norlis/httpgate/trace"
+
+	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/transport/aws"
 )
 
@@ -80,33 +85,44 @@ func NewPublisher(client *awssns.Client, cfg PublisherConfig, logger *slog.Logge
 	if err != nil {
 		return nil, err
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "sns-publisher"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemAWSSNS),
+		slog.String(logfields.KeyMessagingDestination, string(arn)),
+	)
 
 	return &Publisher{client: client, cfg: cfg, topicARN: arn, logger: logger}, nil
 }
 
 // Publish sends ce to the configured topic.
-func (p *Publisher) Publish(ce cloudevents.Event) error {
+func (p *Publisher) Publish(ctx context.Context, ce cloudevents.Event) error {
+	tc, hasTrace := event.InjectTraceFromContext(ctx, &ce)
+
 	input, err := p.cfg.Marshaler.Marshal(p.topicARN, ce)
 	if err != nil {
 		return fmt.Errorf("aws/sns: marshal: %w", err)
 	}
+	if hasTrace {
+		if input.MessageAttributes == nil {
+			input.MessageAttributes = map[string]snstypes.MessageAttributeValue{}
+		}
+		input.MessageAttributes[trace.Header] = snstypes.MessageAttributeValue{
+			DataType:    awssdk.String("String"),
+			StringValue: awssdk.String(tc.Traceparent()),
+		}
+	}
 
-	out, err := p.client.Publish(context.Background(), input)
+	out, err := p.client.Publish(ctx, input)
 	if err != nil {
-		p.logger.Error(
-			"Failed to publish to SNS",
-			slog.Any("error", err),
-			slog.String("topicARN", string(p.topicARN)),
-			slog.String("originalID", ce.ID()),
-		)
+		// No log here: the caller owns the single error log for this operation.
 		return fmt.Errorf("aws/sns: publish: %w", err)
 	}
 
-	p.logger.Debug(
-		"CloudEvent published to SNS",
-		slog.String("topicARN", string(p.topicARN)),
-		slog.String("messageID", awssdk.ToString(out.MessageId)),
-		slog.String("originalID", ce.ID()),
+	p.logger.DebugContext(
+		ctx,
+		"event published",
+		slog.String(logfields.KeyMessagingBrokerID, awssdk.ToString(out.MessageId)),
+		slog.String(logfields.KeyMessagingMessageID, ce.ID()),
 	)
 	return nil
 }

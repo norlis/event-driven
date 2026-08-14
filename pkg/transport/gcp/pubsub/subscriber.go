@@ -9,7 +9,11 @@ import (
 
 	gpubsub "cloud.google.com/go/pubsub/v2"
 
+	"github.com/norlis/httpgate/logging"
+	"github.com/norlis/httpgate/trace"
+
 	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 )
 
 // SubscriberConfig configures a Subscriber.
@@ -42,6 +46,11 @@ func NewSubscriber(client *gpubsub.Client, cfg SubscriberConfig, logger *slog.Lo
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "pubsub-subscriber"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemGCPPubSub),
+		slog.String(logfields.KeyMessagingDestination, cfg.SubscriptionID),
+	)
 	return &Subscriber{
 		client: client,
 		cfg:    cfg,
@@ -59,41 +68,31 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	subscriber.ReceiveSettings.MaxExtension = s.cfg.MaxExtension
 
 	s.logger.Info(
-		"Starting Pub/Sub message reception",
-		slog.String("subscriptionID", s.cfg.SubscriptionID),
-		slog.Int("maxOutstandingMessages", subscriber.ReceiveSettings.MaxOutstandingMessages),
-		slog.Int("numGoroutines", subscriber.ReceiveSettings.NumGoroutines),
+		"subscription started",
+		slog.Int(logfields.KeyConsumerMaxOutstanding, subscriber.ReceiveSettings.MaxOutstandingMessages),
+		slog.Int(logfields.KeyConsumerGoroutines, subscriber.ReceiveSettings.NumGoroutines),
 	)
 
-	err := subscriber.Receive(ctx, func(ctx context.Context, m *gpubsub.Message) {
-		s.logger.Debug(
-			"Pub/Sub message received",
-			slog.String("messageID", m.ID),
-			slog.Any("attributes", m.Attributes),
-		)
-
+	err := subscriber.Receive(ctx, func(_ context.Context, m *gpubsub.Message) {
 		ce, err := s.cfg.Unmarshaler.Unmarshal(m)
 		if err != nil {
 			s.logger.Error(
-				"Pub/Sub unmarshal failed",
-				slog.Any("error", err),
-				slog.String("messageID", m.ID),
+				"message unmarshal failed",
+				logging.Err(err),
+				slog.String(logfields.KeyMessagingBrokerID, m.ID),
 			)
 			// Leave the message: the SDK will redeliver after ack deadline.
 			return
 		}
 
-		handler(event.NewMessage(ce, m.Ack, m.Nack))
+		msgCtx := event.ContextWithTrace(context.Background(), m.Attributes[trace.Header], &ce)
+		handler(event.NewMessageWithParent(msgCtx, ce, m.Ack, m.Nack))
 	})
 
 	if err != nil && !errors.Is(err, context.Canceled) {
-		s.logger.Error(
-			"Pub/Sub Receive error",
-			slog.Any("error", err),
-			slog.String("subscriptionID", s.cfg.SubscriptionID),
-		)
+		s.logger.Error("subscription receive failed", logging.Err(err))
 		return fmt.Errorf("sub.Receive for %s: %w", s.cfg.SubscriptionID, err)
 	}
-	s.logger.Info("Pub/Sub message reception stopped", slog.String("subscriptionID", s.cfg.SubscriptionID))
+	s.logger.Info("subscription stopped")
 	return nil
 }

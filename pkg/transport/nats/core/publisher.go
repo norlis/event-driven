@@ -5,6 +5,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,10 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	natsgo "github.com/nats-io/nats.go"
 
+	"github.com/norlis/httpgate/trace"
+
+	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/pkg/kit/logfields"
 	"github.com/norlis/event-driven/pkg/transport/nats/codec"
 )
 
@@ -44,28 +49,31 @@ func NewPublisher(nc *natsgo.Conn, cfg PublisherConfig, logger *slog.Logger) (*P
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	logger = logger.With(
+		slog.String(logfields.KeyLogLogger, "nats-core-publisher"),
+		slog.String(logfields.KeyMessagingSystem, logfields.SystemNATS),
+		slog.String(logfields.KeyMessagingDestination, cfg.Subject),
+	)
 	return &Publisher{nc: nc, cfg: cfg, logger: logger}, nil
 }
 
 // Publish sends ce to the configured subject (fire-and-forget).
-func (p *Publisher) Publish(ce cloudevents.Event) error {
+func (p *Publisher) Publish(ctx context.Context, ce cloudevents.Event) error {
+	tc, hasTrace := event.InjectTraceFromContext(ctx, &ce)
 	msg, err := p.cfg.Marshaler.Marshal(p.cfg.Subject, ce)
 	if err != nil {
 		return fmt.Errorf("core publish marshal: %w", err)
 	}
+	if hasTrace {
+		if msg.Header == nil {
+			msg.Header = natsgo.Header{}
+		}
+		msg.Header.Set(trace.Header, tc.Traceparent())
+	}
 	if err := p.nc.PublishMsg(msg); err != nil {
-		p.logger.Error(
-			"failed to publish to NATS core",
-			slog.Any("error", err),
-			slog.String("subject", p.cfg.Subject),
-			slog.String("originalID", ce.ID()),
-		)
 		return fmt.Errorf("core publish: %w", err)
 	}
-	p.logger.Debug(
-		"message published to NATS core",
-		slog.String("subject", p.cfg.Subject),
-		slog.String("originalID", ce.ID()),
-	)
+	p.logger.DebugContext(ctx, "event published",
+		slog.String(logfields.KeyMessagingMessageID, ce.ID()))
 	return nil
 }
