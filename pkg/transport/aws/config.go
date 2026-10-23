@@ -20,12 +20,12 @@ const maxRetryAttempts = 8
 
 // NewConfig loads the default AWS configuration with adaptive retry.
 //
-// Region resolution follows the SDK's standard chain (AWS_REGION env var,
-// shared config file, etc.); us-east-1 is the fallback when nothing is set.
+// Region resolution follows the SDK's standard chain (AWS_REGION, shared
+// config, IMDS). There is no fallback: without a region, Identity.Region and
+// the service clients fail explicitly.
 func NewConfig() (*awssdk.Config, error) {
 	cfg, err := config.LoadDefaultConfig(
 		context.Background(),
-		config.WithDefaultRegion("us-east-1"),
 		config.WithRetryer(func() awssdk.Retryer {
 			return retry.NewAdaptiveMode(func(o *retry.AdaptiveModeOptions) {
 				o.StandardOptions = append(o.StandardOptions, func(so *retry.StandardOptions) {

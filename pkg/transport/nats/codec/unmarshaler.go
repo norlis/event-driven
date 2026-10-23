@@ -1,86 +1,60 @@
 package codec
 
 import (
-	"encoding/json"
-	"strings"
-	"time"
+	"fmt"
+	"iter"
+	"uuid"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	natsgo "github.com/nats-io/nats.go"
+
+	"github.com/norlis/event-driven/v2/pkg/transport/internal/envelope"
 )
 
-// reservedCEHeaders are ce- headers mapped to first-class CloudEvent
-// attributes; every other ce-* header becomes an extension.
-var reservedCEHeaders = map[string]struct{}{
-	"ce-id": {}, "ce-source": {}, "ce-type": {}, "ce-specversion": {},
-	"ce-time": {}, "ce-subject": {},
-}
+var defaults = envelope.Defaults{Type: "io.nats.message", Source: "//nats.io"}
 
-// Unmarshaler maps raw NATS headers + data into a CloudEvent. Taking
-// (headers, data) rather than a concrete message type lets the same
-// implementation serve both *nats.Msg (core) and jetstream.Msg.
-type Unmarshaler interface {
-	Unmarshal(headers natsgo.Header, data []byte) (cloudevents.Event, error)
-}
-
-// DefaultUnmarshaler reads CloudEvents in either:
-//   - Structured mode: header Content-Type == "application/cloudevents+json"
-//     and the whole event is JSON-encoded in data.
-//   - Binary mode: ce-* headers carry context attributes; data is the payload.
-//
-// Structured-mode parse failures fall back to binary mode.
-type DefaultUnmarshaler struct{}
-
-// Unmarshal implements Unmarshaler.
-func (DefaultUnmarshaler) Unmarshal(headers natsgo.Header, data []byte) (cloudevents.Event, error) {
-	if headers.Get("Content-Type") == "application/cloudevents+json" {
-		var ce cloudevents.Event
-		if err := json.Unmarshal(data, &ce); err == nil {
-			return ce, nil
-		}
-		// fall through to binary mode
+// Unmarshal reads binary mode ("ce-*" headers) or structured mode
+// (Content-Type application/cloudevents+json). Taking (headers, data) rather
+// than a concrete message type lets it serve both *nats.Msg (core) and
+// jetstream.Msg. Without ce-id the event takes the JetStream dedup id
+// (Nats-Msg-Id) or a generated UUID v7: core NATS has no broker id and the mux
+// needs one for logs and results.
+func Unmarshal(headers natsgo.Header, data []byte) (cloudevents.Event, error) {
+	def := defaults
+	def.ID = headers.Get(natsgo.MsgIdHdr)
+	if def.ID == "" {
+		def.ID = uuid.NewV7().String()
 	}
-
-	ce := cloudevents.New()
-	ce.SetSpecVersion("1.0")
-
-	if id := headers.Get("ce-id"); id != "" {
-		ce.SetID(id)
+	ce, err := envelope.Decode(headers.Get(contentTypeHeader), firstValues(headers), data, def)
+	if err != nil {
+		return cloudevents.Event{}, fmt.Errorf("nats: unmarshal: %w", err)
 	}
-	if t := headers.Get("ce-type"); t != "" {
-		ce.SetType(t)
-	} else {
-		ce.SetType("io.nats.message")
-	}
-	if src := headers.Get("ce-source"); src != "" {
-		ce.SetSource(src)
-	} else {
-		ce.SetSource("//nats.io")
-	}
-	if subj := headers.Get("ce-subject"); subj != "" {
-		ce.SetSubject(subj)
-	}
-	if t := headers.Get("ce-time"); t != "" {
-		if parsed, err := time.Parse(time.RFC3339, t); err == nil {
-			ce.SetTime(parsed)
-		}
-	} else {
-		ce.SetTime(time.Now())
-	}
-
-	_ = ce.SetData(cloudevents.ApplicationJSON, data)
-
-	// Forward remaining ce-* headers as extensions (prefix stripped).
-	for k := range headers {
-		lk := strings.ToLower(k)
-		if !strings.HasPrefix(lk, "ce-") {
-			continue
-		}
-		if _, reserved := reservedCEHeaders[lk]; reserved {
-			continue
-		}
-		ce.SetExtension(strings.TrimPrefix(lk, "ce-"), headers.Get(k))
-	}
-
 	return ce, nil
+}
+
+// Rescue builds the event for a NATS message Unmarshal could not decode: Nats-Msg-Id or a UUID v7 as id, the codec defaults
+// and the raw data. Core and JetStream subscribers hand it to the router as an
+// undecodable message.
+func Rescue(headers natsgo.Header, data []byte) cloudevents.Event {
+	def := defaults
+	def.ID = headers.Get(natsgo.MsgIdHdr)
+	if def.ID == "" {
+		def.ID = uuid.NewV7().String()
+	}
+	return envelope.Rescue(def, headers.Get(contentTypeHeader), data)
+}
+
+// firstValues yields each header with its first value, the way Header.Get
+// reads it.
+func firstValues(h natsgo.Header) iter.Seq2[string, string] {
+	return func(yield func(string, string) bool) {
+		for k, vs := range h {
+			if len(vs) == 0 {
+				continue
+			}
+			if !yield(k, vs[0]) {
+				return
+			}
+		}
+	}
 }

@@ -2,7 +2,6 @@ package eventhttp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -39,9 +38,8 @@ type TokenConfig struct {
 	// indicates the token's lifetime in seconds (commonly "expires_in").
 	// When set and the field is present and numeric, it takes precedence over
 	// CacheTTL. When set but the field is missing or non-numeric, falls back
-	// to CacheTTL. Accepts float64 (default JSON number decoding) and
-	// json.Number; string values are not parsed (known limitation, extendable
-	// later without breaking the API).
+	// to CacheTTL. The response is decoded by the package's own resty client,
+	// so numbers arrive as float64; string values are not parsed.
 	ExpiresInField string
 
 	// CacheTTL controls how long the token is cached when ExpiresInField is
@@ -73,7 +71,8 @@ type TokenConfig struct {
 //	    Headers: map[string]string{
 //	        "Content-Type": "application/x-www-form-urlencoded",
 //	    },
-//	    Body:           []byte("grant_type=client_credentials&client_id=ID&client_secret=SECRET"),
+//	    Body: fmt.Appendf(nil, "grant_type=client_credentials&client_id=%s&client_secret=%s",
+//	        os.Getenv("OAUTH_CLIENT_ID"), os.Getenv("OAUTH_CLIENT_SECRET")), // never inline credentials
 //	    TokenPrefix:    "Bearer ",
 //	    ExpiresInField: "expires_in",
 //	    CacheTTL:       50 * time.Minute, // fallback if the IdP omits expires_in
@@ -85,7 +84,7 @@ type TokenConfig struct {
 //	    Headers: map[string]string{
 //	        "Content-Type": "application/json",
 //	    },
-//	    Body:               []byte(`{"user":"svc","password":"secret"}`),
+//	    Body:               fmt.Appendf(nil, `{"user":"svc","password":%q}`, os.Getenv("AUTH_PASSWORD")),
 //	    ResponseTokenField: "token",
 //	    TokenPrefix:        "Token ",
 //	    CacheTTL:           30 * time.Minute,
@@ -103,7 +102,6 @@ func NewTokenProvider(cfg TokenConfig) TokenFunc {
 		client: newClient(clientOpts{
 			Timeout:      cfg.Timeout,
 			Retry:        cfg.Retry,
-			Logger:       nil,
 			UserAgent:    cfg.UserAgent,
 			DefaultRetry: 2,
 		}),
@@ -181,15 +179,8 @@ func (tp *httpTokenProvider) resolveTTL(result map[string]any) time.Duration {
 	if !ok {
 		return tp.cfg.CacheTTL
 	}
-	switch v := raw.(type) {
-	case float64:
-		if v > 0 {
-			return time.Duration(v) * time.Second
-		}
-	case json.Number:
-		if n, err := v.Int64(); err == nil && n > 0 {
-			return time.Duration(n) * time.Second
-		}
+	if v, ok := raw.(float64); ok && v > 0 {
+		return time.Duration(v) * time.Second
 	}
 	return tp.cfg.CacheTTL
 }

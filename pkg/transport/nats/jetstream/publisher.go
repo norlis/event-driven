@@ -15,9 +15,9 @@ import (
 
 	"github.com/norlis/httpgate/trace"
 
-	"github.com/norlis/event-driven/pkg/event"
-	"github.com/norlis/event-driven/pkg/kit/logfields"
-	"github.com/norlis/event-driven/pkg/transport/nats/codec"
+	"github.com/norlis/event-driven/v2/pkg/event"
+	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
+	"github.com/norlis/event-driven/v2/pkg/transport/nats/codec"
 )
 
 // PublisherConfig configures a Publisher.
@@ -58,14 +58,7 @@ func NewPublisher(js jetstream.JetStream, cfg PublisherConfig, logger *slog.Logg
 	if cfg.Marshaler == nil {
 		cfg.Marshaler = codec.DefaultMarshaler{}
 	}
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
-	logger = logger.With(
-		slog.String(logfields.KeyLogLogger, "jetstream-publisher"),
-		slog.String(logfields.KeyMessagingSystem, logfields.SystemNATS),
-		slog.String(logfields.KeyMessagingDestination, cfg.Subject),
-	)
+	logger = logfields.Transport(logger, "jetstream-publisher", logfields.SystemNATS, cfg.Subject)
 	return &Publisher{js: js, cfg: cfg, logger: logger}, nil
 }
 

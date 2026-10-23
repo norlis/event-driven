@@ -5,15 +5,15 @@ package skiperr
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/norlis/httpgate/logging"
 
-	"github.com/norlis/event-driven/pkg/eventmux"
-	"github.com/norlis/event-driven/pkg/kit/logfields"
+	"github.com/norlis/event-driven/v2/pkg/eventmux"
+	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
 )
 
 // Predicate decides whether a handler error should be swallowed. Description
@@ -32,12 +32,9 @@ type Skipper struct {
 
 // New creates a new Skipper middleware.
 func New(logger *slog.Logger, predicates ...Predicate) Skipper {
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
 	return Skipper{
 		predicates: predicates,
-		logger:     logger.With(slog.String(logfields.KeyLogLogger, "skiperr")),
+		logger:     logfields.Component(logger, "skiperr"),
 	}
 }
 
@@ -50,7 +47,7 @@ func New(logger *slog.Logger, predicates ...Predicate) Skipper {
 //	    skiperr.ByType[validator.ValidationErrors]("validator-errors"),
 //	).Middleware
 func (i Skipper) Middleware(next eventmux.HandlerFunc) eventmux.HandlerFunc {
-	return func(ctx context.Context, data any) (result json.RawMessage, err error) {
+	return func(ctx context.Context, data any) (result jsontext.Value, err error) {
 		result, err = next(ctx, data)
 		if err != nil {
 			for _, predicate := range i.predicates {
@@ -75,13 +72,12 @@ func (i Skipper) Middleware(next eventmux.HandlerFunc) eventmux.HandlerFunc {
 	}
 }
 
-// ByErr creates a predicate that ignores a specific sentinel error instance.
+// ByErr creates a predicate that swallows errors matching targetErr
+// (errors.Is); name identifies the predicate in the "error skipped" log.
 func ByErr(name string, targetErr error) Predicate {
 	return Predicate{
-		Description: fmt.Sprintf("Err: (%s)", targetErr.Error()),
-		Matches: func(errToCheck error) bool {
-			return errors.Is(errToCheck, targetErr)
-		},
+		Description: fmt.Sprintf("Err: (%s)", name),
+		Matches:     func(err error) bool { return errors.Is(err, targetErr) },
 	}
 }
 

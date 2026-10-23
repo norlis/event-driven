@@ -3,7 +3,7 @@ version: "2"
 
 run:
   timeout: 5m
-  go: "1.26"
+  go: "1.27"
   modules-download-mode: readonly
   allow-parallel-runners: true
   tests: true
@@ -36,7 +36,8 @@ formatters:
           replacement: "a[b:]"
 
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
 #      module-path: ..
 
 # === LINTERS ===
@@ -223,6 +224,12 @@ linters:
               desc: "Deprecated desde Go 1.16, usa 'io' o 'os'"
             - pkg: "github.com/pkg/errors"
               desc: "Usa errors estándar de Go con fmt.Errorf y %w"
+            - pkg: "github.com/google/uuid"
+              desc: "Usa el paquete uuid de la stdlib (Go 1.27+)"
+        json:
+          deny:
+            - pkg: "encoding/json$"
+              desc: "Usa encoding/json/v2 y encoding/json/jsontext"
 
     # Error lint
     errorlint:

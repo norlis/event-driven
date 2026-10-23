@@ -5,7 +5,7 @@ import (
 
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 
-	"github.com/norlis/event-driven/pkg/event"
+	"github.com/norlis/event-driven/v2/pkg/event"
 )
 
 // Filter decides whether a message should be routed to a given handler.
@@ -20,8 +20,15 @@ type Publisher interface {
 	Publish(ctx context.Context, ce cloudevents.Event) error
 }
 
-// Subscription is a long-running source of CloudEvents. Start must block
-// until ctx is cancelled and invoke handler for every received message.
+// Subscription is a long-running source of CloudEvents.
 type Subscription interface {
-	Start(ctx context.Context, handler func(*event.Message)) error
+	// Start establishes the subscription and returns once messages can flow;
+	// a setup failure is returned here, synchronously. ctx bounds the setup
+	// calls only, not the subscription's lifetime. Afterwards every received
+	// message goes to handler and a failure that stops delivery for good
+	// (not a Stop) goes to onError, at most once. onError must not block;
+	// nil is tolerated.
+	Start(ctx context.Context, handler func(*event.Message), onError func(error)) error
+	// Stop ends delivery and waits for in-flight handlers until ctx expires.
+	Stop(ctx context.Context) error
 }

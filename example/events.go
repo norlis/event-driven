@@ -3,13 +3,14 @@
 package example
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
-	"github.com/norlis/event-driven/pkg/eventmux"
-	"github.com/norlis/event-driven/pkg/filter/cefilter"
-	"github.com/norlis/event-driven/pkg/filter/jmespath"
-	"github.com/norlis/event-driven/pkg/transport/eventhttp"
+	"github.com/norlis/event-driven/v2/pkg/eventmux"
+	"github.com/norlis/event-driven/v2/pkg/filter/cefilter"
+	"github.com/norlis/event-driven/v2/pkg/filter/jmespath"
+	"github.com/norlis/event-driven/v2/pkg/transport/eventhttp"
 )
 
 // RegisterEventHandlers wires routes onto both muxes. The four scenarios
@@ -19,51 +20,55 @@ import (
 //	HTTP-2: HTTP command + JMESPath → webhook
 //	PS-1:   Pub/Sub result event → webhook         (cross: Pub/Sub → HTTP)
 //	PS-2:   Pub/Sub event by CE type → Pub/Sub topic
-func RegisterEventHandlers(params EventParams, routers RouterParams, logger *slog.Logger, pubsubPub eventmux.Publisher) {
-	webhookPub := eventhttp.NewPublisher(eventhttp.PublisherConfig{
+func RegisterEventHandlers(pubsubPub eventmux.Publisher, params EventParams, routers RouterParams, logger *slog.Logger) error {
+	webhookPub, err := eventhttp.NewPublisher(eventhttp.PublisherConfig{
 		TargetURL: WebhookURL(),
 		Timeout:   5 * time.Second,
 	}, logger)
+	if err != nil {
+		return fmt.Errorf("example: webhook publisher: %w", err)
+	}
+	webhookFilter, err := jmespath.New("contains(['webhook', 'pepe'], name)", logger)
+	if err != nil {
+		return fmt.Errorf("example: webhook filter: %w", err)
+	}
 
 	// ── HTTPMux (HTTP → handler) ────────────────────────────────────────
 
 	// HTTP-1: HTTP command → Pub/Sub topic.
 	// The result (*.result) is consumed by PS-1 and forwarded to the webhook,
 	// completing the HTTP → Pub/Sub → HTTP round trip.
-	routers.HTTPMux.Register(
+	routers.HTTPMux.Handle(
 		pubsubPub,
 		cefilter.ByType("http.command"),
-		Person{},
-		eventmux.Wrap(params.Handler.Command),
+		params.Handler.Command,
 	)
 
 	// HTTP-2: HTTP command + JMESPath filter on payload → webhook directly.
-	routers.HTTPMux.Register(
+	routers.HTTPMux.Handle(
 		webhookPub,
 		cefilter.All(
 			cefilter.ByType("http.command.webhook"),
-			jmespath.New("contains(['webhook', 'pepe'], name)", logger),
+			webhookFilter,
 		),
-		Person{},
-		eventmux.Wrap(params.Handler.Command),
+		params.Handler.Command,
 	)
 
-	// ── PrincipalMux (Pub/Sub → handler) ────────────────────────────────
+	// ── PubSubMux (Pub/Sub → handler) ───────────────────────────────────
 
 	// PS-1: Result events from HTTP-1 land here as `http.command.result` and
 	// get forwarded to the webhook.
-	routers.PrincipalMux.Register(
+	routers.PubSubMux.Handle(
 		webhookPub,
 		cefilter.ByType("http.command.result"),
-		Person{},
-		eventmux.Wrap(params.Handler.Execute),
+		params.Handler.Execute,
 	)
 
 	// PS-2: Domain events by CE type → publish result to Pub/Sub topic.
-	routers.PrincipalMux.Register(
+	routers.PubSubMux.Handle(
 		pubsubPub,
 		cefilter.ByType("com.example.person.created", "com.example.person.updated"),
-		Person{},
-		eventmux.Wrap(params.Handler.Execute),
+		params.Handler.Execute,
 	)
+	return nil
 }

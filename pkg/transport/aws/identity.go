@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
@@ -29,31 +30,32 @@ type Identity struct {
 	// Client overrides the STS client (tests). Nil means built from Config.
 	Client CallerIdentityAPI
 
-	once      sync.Once
+	mu        sync.Mutex
 	accountID string
 	arn       string
-	err       error
 }
 
-// resolve performs the single cached GetCallerIdentity lookup.
+// resolve performs the GetCallerIdentity lookup once. Only a success is
+// cached: a transient STS failure must not disable the instance for good.
 func (i *Identity) resolve(ctx context.Context) error {
 	if i.Config == nil && i.Client == nil {
 		return errors.New("aws: Identity requires Config")
 	}
-	i.once.Do(func() {
-		client := i.Client
-		if client == nil {
-			client = awssts.NewFromConfig(*i.Config)
-		}
-		out, err := client.GetCallerIdentity(ctx, &awssts.GetCallerIdentityInput{})
-		if err != nil {
-			i.err = fmt.Errorf("aws: GetCallerIdentity: %w", err)
-			return
-		}
-		i.accountID = awssdk.ToString(out.Account)
-		i.arn = awssdk.ToString(out.Arn)
-	})
-	return i.err
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.arn != "" {
+		return nil
+	}
+	client := i.Client
+	if client == nil {
+		client = awssts.NewFromConfig(*i.Config)
+	}
+	out, err := client.GetCallerIdentity(ctx, &awssts.GetCallerIdentityInput{})
+	if err != nil {
+		return fmt.Errorf("aws: GetCallerIdentity: %w", err)
+	}
+	i.accountID, i.arn = awssdk.ToString(out.Account), awssdk.ToString(out.Arn)
+	return nil
 }
 
 // AccountID returns the AWS account ID of the caller. The STS lookup happens
@@ -73,6 +75,20 @@ func (i *Identity) Arn(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return i.arn, nil
+}
+
+// Partition returns the AWS partition of the caller (aws, aws-cn,
+// aws-us-gov), read from the cached caller ARN. Same single STS call.
+func (i *Identity) Partition(ctx context.Context) (string, error) {
+	arn, err := i.Arn(ctx)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.SplitN(arn, ":", 3)
+	if len(parts) < 3 || parts[0] != "arn" || parts[1] == "" {
+		return "", fmt.Errorf("aws: unexpected caller ARN %q", arn)
+	}
+	return parts[1], nil
 }
 
 // Region returns the region resolved by the SDK config.

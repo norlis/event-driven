@@ -10,6 +10,11 @@ import (
 )
 
 // Store is a thread-safe string→string container for per-message metadata.
+// Every key becomes a CloudEvents extension of the result event and, on
+// SNS/SQS, one of the 10 MessageAttributes allowed per message; after the
+// fixed attributes only 1–2 keys fit (see sns.MaxMessageAttributes). Reserved
+// keys the mux owns and ignores here with a WARN: "correlationid",
+// "deadletterreason" and "deadlettererror".
 type Store struct {
 	mu   sync.RWMutex
 	data map[string]string
@@ -25,13 +30,6 @@ func (b *Store) Set(key, value string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.data[key] = value
-}
-
-// Get returns the value for key, or "" if absent.
-func (b *Store) Get(key string) string {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.data[key]
 }
 
 // All returns a snapshot copy of every entry.

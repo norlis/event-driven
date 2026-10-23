@@ -2,23 +2,10 @@ package eventmux
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"reflect"
+	"encoding/json/jsontext"
 )
 
-// Wrap converts a typed handler into a HandlerFunc, performing the type
-// assertion from any to T. The error message uses reflect.TypeFor so pointer
-// and interface types are printed correctly (e.g. "*Foo" instead of "<nil>").
-func Wrap[T any](fn func(context.Context, T) (json.RawMessage, error)) HandlerFunc {
-	expected := reflect.TypeFor[T]()
-
-	return func(ctx context.Context, data any) (json.RawMessage, error) {
-		casted, ok := data.(T)
-		if !ok {
-			return nil, fmt.Errorf("handler: expected %s but got %T", expected, data)
-		}
-
-		return fn(ctx, casted)
-	}
-}
+// HandlerFunc is the type-erased handler the middleware chain sees. data is
+// the payload Handle decoded into the route's T; the optional jsontext.Value
+// becomes the body of the result event when the route has a Publisher.
+type HandlerFunc func(ctx context.Context, data any) (jsontext.Value, error)

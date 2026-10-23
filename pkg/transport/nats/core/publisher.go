@@ -15,9 +15,9 @@ import (
 
 	"github.com/norlis/httpgate/trace"
 
-	"github.com/norlis/event-driven/pkg/event"
-	"github.com/norlis/event-driven/pkg/kit/logfields"
-	"github.com/norlis/event-driven/pkg/transport/nats/codec"
+	"github.com/norlis/event-driven/v2/pkg/event"
+	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
+	"github.com/norlis/event-driven/v2/pkg/transport/nats/codec"
 )
 
 // PublisherConfig configures a Publisher.
@@ -46,14 +46,7 @@ func NewPublisher(nc *natsgo.Conn, cfg PublisherConfig, logger *slog.Logger) (*P
 	if cfg.Marshaler == nil {
 		cfg.Marshaler = codec.DefaultMarshaler{}
 	}
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
-	logger = logger.With(
-		slog.String(logfields.KeyLogLogger, "nats-core-publisher"),
-		slog.String(logfields.KeyMessagingSystem, logfields.SystemNATS),
-		slog.String(logfields.KeyMessagingDestination, cfg.Subject),
-	)
+	logger = logfields.Transport(logger, "nats-core-publisher", logfields.SystemNATS, cfg.Subject)
 	return &Publisher{nc: nc, cfg: cfg, logger: logger}, nil
 }
 

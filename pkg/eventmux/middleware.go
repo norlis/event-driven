@@ -2,15 +2,15 @@ package eventmux
 
 import "slices"
 
-// Middleware es una función que envuelve un HandlerFunc para añadir comportamiento.
+// Middleware wraps a HandlerFunc to add behaviour around it.
 type Middleware func(next HandlerFunc) HandlerFunc
 
-// Chain aplica una cadena de middlewares a un handler.
-// Los middlewares se aplican en orden inverso (el último añadido es el más externo).
+// Chain wraps handler with mws so that the first middleware is the outermost:
+// Chain(h, A, B) returns A(B(h)), and a call runs A, then B, then h.
 func Chain(handler HandlerFunc, mws ...Middleware) HandlerFunc {
-	chainedHandler := handler
+	chained := handler
 	for _, mw := range slices.Backward(mws) {
-		chainedHandler = mw(chainedHandler)
+		chained = mw(chained)
 	}
-	return chainedHandler
+	return chained
 }
