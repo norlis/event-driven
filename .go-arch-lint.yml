@@ -1,0 +1,120 @@
+# go-arch-lint v1.19.0 — capas de docs/diagrams/03-components.md.
+# Explicación y resultado: docs/diagrams/08-arch-lint.md.
+version: 3
+workdir: .
+
+allow:
+  depOnAnyVendor: false
+
+exclude:
+  - tools
+  - bin
+  - deployments
+  - scripts
+  - policies
+  - docs
+
+excludeFiles:
+  - "^.*_test\\.go$"
+
+components:
+  # Núcleo
+  event:      { in: pkg/event }
+  eventmux:   { in: pkg/eventmux }
+  metadata:   { in: pkg/eventmux/metadata }
+  # Extensiones
+  filter:     { in: pkg/filter/* }
+  middleware: { in: pkg/middleware/* }
+  # Transportes
+  tr-internal: { in: pkg/transport/internal/* }
+  tr-aws:      { in: pkg/transport/aws }
+  tr-codec:    { in: pkg/transport/nats/codec }
+  tr-http:     { in: pkg/transport/eventhttp }
+  tr-pubsub:   { in: pkg/transport/gcp/pubsub }
+  tr-sns:      { in: pkg/transport/aws/sns }
+  tr-sqs:      { in: pkg/transport/aws/sqs }
+  tr-nats:     { in: [pkg/transport/nats/core, pkg/transport/nats/jetstream] }
+  tr-natsconn: { in: pkg/transport/nats/natsconn }
+  # Kit
+  logfields:  { in: pkg/kit/logfields }
+  lifecycle:  { in: pkg/kit/lifecycle }
+  httpserver: { in: pkg/kit/httpserver }
+  fxmux:      { in: pkg/kit/fxmux }
+  # Aplicación
+  example:    { in: [example, example/**] }
+
+# Excepción documentada (D8.1): logfields está en kit pero es un catálogo de
+# claves de log que usan todas las capas.
+commonComponents:
+  - logfields
+
+vendors:
+  cloudevents:     { in: [github.com/cloudevents/sdk-go/v2/**] }
+  httpgate-log:    { in: [github.com/norlis/httpgate/logging] }
+  httpgate-trace:  { in: [github.com/norlis/httpgate/trace] }
+  httpgate-server: { in: [github.com/norlis/httpgate/server] }
+  fx:              { in: [go.uber.org/fx, go.uber.org/fx/**] }
+  jmespath:        { in: [github.com/jmespath/go-jmespath] }
+  validator:       { in: [github.com/go-playground/validator/v10] }
+  resty:           { in: [resty.dev/v3] }
+  gcp-pubsub:      { in: [cloud.google.com/go/pubsub/v2, cloud.google.com/go/pubsub/v2/**, google.golang.org/grpc/**] }
+  aws-sdk:         { in: [github.com/aws/aws-sdk-go-v2/**] }
+  nats:            { in: [github.com/nats-io/nats.go, github.com/nats-io/nats.go/**] }
+
+deps:
+  # --- Núcleo: no importa nada por encima ---
+  # metadata no aparece: sin entrada en deps no puede importar nada del proyecto.
+  event:
+    canUse: [cloudevents, httpgate-trace]
+  eventmux:
+    mayDependOn: [event, metadata]
+    canUse: [cloudevents, httpgate-log]
+
+  # --- Extensiones: solo núcleo ---
+  filter:
+    mayDependOn: [event, eventmux]
+    canUse: [jmespath, httpgate-log]
+  middleware:
+    mayDependOn: [event, eventmux]
+    canUse: [validator, httpgate-log]
+
+  # --- Transportes: event + transport/internal + su SDK; nunca eventmux ni kit ---
+  tr-internal:
+    mayDependOn: [event]
+    canUse: [cloudevents]
+  tr-aws:
+    canUse: [aws-sdk]
+  tr-codec:
+    mayDependOn: [tr-internal]
+    canUse: [cloudevents, nats]
+  # Cada transporte solo ve su SDK; ninguno importa a otro transporte.
+  tr-http:
+    mayDependOn: [event, tr-internal]
+    canUse: [cloudevents, httpgate-log, httpgate-trace, resty]
+  tr-pubsub:
+    mayDependOn: [event, tr-internal]
+    canUse: [cloudevents, httpgate-log, httpgate-trace, gcp-pubsub]
+  tr-sns:
+    mayDependOn: [event, tr-internal, tr-aws]
+    canUse: [cloudevents, httpgate-trace, aws-sdk]
+  tr-sqs:
+    mayDependOn: [event, tr-internal]
+    canUse: [cloudevents, httpgate-log, httpgate-trace, aws-sdk]
+  tr-nats:
+    mayDependOn: [event, tr-codec]
+    canUse: [cloudevents, httpgate-log, httpgate-trace, nats]
+  tr-natsconn:
+    mayDependOn: [tr-internal]
+    canUse: [nats]
+
+  # --- Kit: nunca importa el router; *eventmux.Mux cumple Component por forma ---
+  httpserver:
+    canUse: [httpgate-log, httpgate-server]
+  fxmux:
+    mayDependOn: [lifecycle]
+    canUse: [fx, httpgate-log]
+
+  # --- Aplicación: puede importar cualquier cosa ---
+  example:
+    anyProjectDeps: true
+    anyVendorDeps: true

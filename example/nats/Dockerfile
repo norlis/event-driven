@@ -3,7 +3,7 @@
 #   docker build -f example/nats/Dockerfile -t nats-example .
 # (docker compose -f example/nats/compose.yaml up --build does this for you.)
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.27.3-alpine AS build
 WORKDIR /src
 
 # Cache module downloads.

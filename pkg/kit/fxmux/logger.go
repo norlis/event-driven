@@ -1,5 +1,6 @@
-// Package fxmux integrates eventmux.Mux with uber/fx: it hooks Run/Stop into
-// the fx.Lifecycle and provides an fxevent.Logger that pipes FX events to slog.
+// Package fxmux integrates the library with uber/fx: BindGroup runs a
+// lifecycle.Group (muxes, HTTP server, resources) under one fx.Lifecycle hook,
+// and NewLogger pipes FX events to slog.
 package fxmux
 
 import (
@@ -10,30 +11,29 @@ import (
 
 	"github.com/norlis/httpgate/logging"
 
-	"github.com/norlis/event-driven/pkg/kit/logfields"
+	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
 )
 
 // NewLogger returns an fxevent.Logger that pipes FX lifecycle events to slog.
 //
 // Verbose events (Provided, Invoked, hook execution, BeforeRun, Run, etc.) are
-// silenced. Errors land on Error level; high-level lifecycle transitions
+// silenced. Errors land on Error level once each: a failed start is reported
+// by Started, a failed stop by Stopped; the hook and rollback events that
+// repeat the same error are not logged. High-level lifecycle transitions
 // (Started, Stopping) land on Info.
 //
 // Wire it into fx.New with:
 //
 //	fx.WithLogger(fxmux.NewLogger),
 func NewLogger(log *slog.Logger) fxevent.Logger {
-	return &slogLogger{log: log.With(slog.String(logfields.KeyLogLogger, "fx"))}
+	return &slogLogger{log: logfields.Component(log, "fx")}
 }
 
 type slogLogger struct {
 	log *slog.Logger
 }
 
-// LogEvent is a pure dispatcher; its cyclomatic complexity tracks the number
-// of fxevent types we care about, not branching logic.
-//
-//nolint:gocyclo,cyclop // dispatcher
+// LogEvent is a pure dispatcher over the fxevent types we care about.
 func (l *slogLogger) LogEvent(event fxevent.Event) {
 	switch e := event.(type) {
 	case *fxevent.Started:
@@ -52,23 +52,12 @@ func (l *slogLogger) LogEvent(event fxevent.Event) {
 		if e.Err != nil {
 			l.log.Error("app stop failed", logging.Err(e.Err))
 		}
-	case *fxevent.RollingBack:
-		l.log.Error("rolling back after start failure", logging.Err(e.StartErr))
 	case *fxevent.RolledBack:
+		// A rollback that fails is a distinct error. RollingBack, OnStartExecuted
+		// and OnStopExecuted carry the same error Started / Stopped report, so
+		// they stay silent: one record per failure.
 		if e.Err != nil {
 			l.log.Error("rollback failed", logging.Err(e.Err))
-		}
-	case *fxevent.OnStartExecuted:
-		if e.Err != nil {
-			l.log.Error("onstart hook failed",
-				slog.String(logfields.KeyCodeFunction, e.FunctionName),
-				logging.Err(e.Err))
-		}
-	case *fxevent.OnStopExecuted:
-		if e.Err != nil {
-			l.log.Error("onstop hook failed",
-				slog.String(logfields.KeyCodeFunction, e.FunctionName),
-				logging.Err(e.Err))
 		}
 	case *fxevent.Provided:
 		if e.Err != nil {

@@ -1,25 +1,26 @@
 package eventhttp
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"time"
+
+	cloudevents "github.com/cloudevents/sdk-go/v2/event"
+
+	"github.com/norlis/event-driven/v2/pkg/event"
 )
 
-// Response is the JSON envelope returned by the HTTP subscriber. Build it
-// via ResponseBuilder to ensure required fields are populated.
+// Response is the JSON envelope returned by the HTTP subscriber.
 type Response struct {
-	ID        string `json:"id"`
-	Name      string `json:"name,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
+	ID            string `json:"id"`            // CloudEvent id
+	Type          string `json:"type"`          // CloudEvent type
+	CorrelationID string `json:"correlationId"` // correlationid extension: client-supplied or minted by the subscriber
+	Timestamp     int64  `json:"timestamp"`     // Unix seconds
+	Instance      string `json:"instance"`      // ServeMux pattern that handled the request
 
-	RequestID string `json:"requestId"`
-	Timestamp int64  `json:"timestamp"`
-	Instance  string `json:"instance"` // a URI that identifies the specific occurrence of the error
-
-	Code   string `json:"error,omitempty"`  // a unique identifier for the error
-	Detail string `json:"detail,omitempty"` // a human-readable explanation of the error
-	Status int    `json:"status"`           //  the HTTP response code (optional) https://go.dev/src/net/http/status.go
+	Code   ErrorCode `json:"error,omitempty"`
+	Detail string    `json:"detail,omitempty"`
+	Status int       `json:"status"`
 }
 
 // JSON writes the Response as JSON. If Status is unset it defaults to 202.
@@ -28,62 +29,29 @@ func (res *Response) JSON(w http.ResponseWriter, r *http.Request) {
 		res.Status = http.StatusAccepted
 	}
 
+	// Encode before writing headers so a failure (e.g. invalid UTF-8 in a
+	// client-supplied ID) can still change the status.
+	body, err := json.Marshal(res)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(res.Status)
-	if err := json.NewEncoder(w).Encode(res); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	_, _ = w.Write(body)
+}
+
+// newResponse fills the envelope from the event identifiers, the ServeMux
+// pattern that handled the request and the outcome. An empty code means success.
+func newResponse(ce cloudevents.Event, instance string, status int, code ErrorCode, detail string) *Response {
+	return &Response{
+		ID:            ce.ID(),
+		Type:          ce.Type(),
+		CorrelationID: event.CorrelationID(ce),
+		Timestamp:     time.Now().Unix(),
+		Instance:      instance,
+		Code:          code,
+		Detail:        detail,
+		Status:        status,
 	}
-}
-
-// ResponseBuilder builds a Response with sensible defaults using a fluent API.
-type ResponseBuilder struct {
-	response *Response
-}
-
-// NewResponseBuilder returns a builder pre-filled with the current Unix timestamp.
-func NewResponseBuilder() *ResponseBuilder {
-	return &ResponseBuilder{
-		response: &Response{
-			Timestamp: time.Now().Unix(),
-		},
-	}
-}
-
-// WithID populates the three correlation identifiers.
-func (b *ResponseBuilder) WithID(msgID, reqID, sessionID string) *ResponseBuilder {
-	b.response.ID = msgID
-	b.response.RequestID = reqID
-	b.response.SessionID = sessionID
-	return b
-}
-
-// WithName sets the response Name and Instance URI.
-func (b *ResponseBuilder) WithName(name, instance string) *ResponseBuilder {
-	b.response.Name = name
-	b.response.Instance = instance
-	return b
-}
-
-// WithError populates the error fields (detail + code).
-func (b *ResponseBuilder) WithError(detail, code string) *ResponseBuilder {
-	b.response.Detail = detail
-	b.response.Code = code
-	return b
-}
-
-// WithStatus sets the HTTP status code.
-func (b *ResponseBuilder) WithStatus(status int) *ResponseBuilder {
-	b.response.Status = status
-	return b
-}
-
-// WithInstance sets the Instance URI in isolation (without overwriting Name).
-func (b *ResponseBuilder) WithInstance(instance string) *ResponseBuilder {
-	b.response.Instance = instance
-	return b
-}
-
-// Build returns the assembled Response.
-func (b *ResponseBuilder) Build() *Response {
-	return b.response
 }

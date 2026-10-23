@@ -21,6 +21,5 @@ import (
 
 	// Herramientas de desarrollo y testing
 	_ "github.com/go-delve/delve/cmd/dlv"
-	_ "golang.org/x/tools/gopls"
 	_ "gotest.tools/gotestsum"
 )

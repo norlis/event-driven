@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	natsgo "github.com/nats-io/nats.go"
 
-	"github.com/norlis/httpgate/logging"
 	"github.com/norlis/httpgate/trace"
 
-	"github.com/norlis/event-driven/pkg/event"
-	"github.com/norlis/event-driven/pkg/kit/logfields"
-	"github.com/norlis/event-driven/pkg/transport/nats/codec"
+	"github.com/norlis/event-driven/v2/pkg/event"
+	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
+	"github.com/norlis/event-driven/v2/pkg/transport/nats/codec"
 )
 
 // SubscriberConfig configures a Subscriber.
@@ -24,8 +25,6 @@ type SubscriberConfig struct {
 	// receives every message). Set it only to deliberately load-balance
 	// (competing consumers) across instances.
 	QueueGroup string
-	// Unmarshaler converts headers+data into a CloudEvent. Default: codec.DefaultUnmarshaler{}.
-	Unmarshaler codec.Unmarshaler
 }
 
 // Subscriber consumes messages from a NATS core subject. Satisfies eventmux.Subscription.
@@ -33,6 +32,10 @@ type Subscriber struct {
 	nc     *natsgo.Conn
 	cfg    SubscriberConfig
 	logger *slog.Logger
+
+	mu       sync.Mutex
+	sub      *natsgo.Subscription
+	draining bool // Drain already issued by a Stop whose ctx expired
 }
 
 // NewSubscriber returns a Subscriber backed by the given connection.
@@ -43,31 +46,30 @@ func NewSubscriber(nc *natsgo.Conn, cfg SubscriberConfig, logger *slog.Logger) (
 	if cfg.Subject == "" {
 		return nil, errors.New("core subscriber: empty subject")
 	}
-	if cfg.Unmarshaler == nil {
-		cfg.Unmarshaler = codec.DefaultUnmarshaler{}
-	}
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
-	logger = logger.With(
-		slog.String(logfields.KeyLogLogger, "nats-core-subscriber"),
-		slog.String(logfields.KeyMessagingSystem, logfields.SystemNATS),
-		slog.String(logfields.KeyMessagingDestination, cfg.Subject),
-	)
+	logger = logfields.Transport(logger, "nats-core-subscriber", logfields.SystemNATS, cfg.Subject)
 	return &Subscriber{nc: nc, cfg: cfg, logger: logger}, nil
 }
 
-// Start subscribes and blocks until ctx is cancelled, then drains.
-func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)) error {
+// Start subscribes and returns. Core NATS has no fatal runtime failure of
+// its own (connection events belong to whoever owns nc): onError is never
+// called. A second Start returns event.ErrAlreadyStarted.
+func (s *Subscriber) Start(_ context.Context, handler func(msg *event.Message), _ func(error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sub != nil {
+		return event.ErrAlreadyStarted
+	}
 	cb := func(m *natsgo.Msg) {
-		ce, err := s.cfg.Unmarshaler.Unmarshal(m.Header, m.Data)
+		traceparent := m.Header.Get(trace.Header)
+		ce, err := codec.Unmarshal(m.Header, m.Data)
 		if err != nil {
-			// Core NATS has no redelivery; the message is definitively lost.
-			s.logger.Error("message unmarshal failed", logging.Err(err))
+			// Core NATS has no redelivery: the router dead-letters a copy with
+			// the raw data (when configured) and logs the discard once.
+			rescue := codec.Rescue(m.Header, m.Data)
+			handler(event.NewUndecodable(event.ContextWithTrace(context.Background(), traceparent, nil), rescue, event.Delivery{}, err))
 			return
 		}
-		msgCtx := event.ContextWithTrace(context.Background(), m.Header.Get(trace.Header), &ce)
-		handler(event.NewMessageWithParent(msgCtx, ce, nil, nil))
+		handler(event.NewMessage(event.ContextWithTrace(context.Background(), traceparent, &ce), ce, event.Delivery{}))
 	}
 
 	var (
@@ -82,13 +84,47 @@ func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)
 	if err != nil {
 		return fmt.Errorf("core subscribe %q: %w", s.cfg.Subject, err)
 	}
+	s.sub = sub
 
 	s.logger.Info("subscription started",
 		slog.String(logfields.KeyConsumerGroup, s.cfg.QueueGroup))
-	<-ctx.Done()
-	if err := sub.Drain(); err != nil {
-		s.logger.Warn("nats drain failed", logging.Err(err))
+	return nil
+}
+
+// drainPoll is how often Stop checks whether the asynchronous Drain finished.
+const drainPoll = 10 * time.Millisecond
+
+// Stop drains the subscription and waits until the SDK marks it invalid
+// (all pending callbacks done) or ctx expires. After an expired ctx the
+// drain is still running, so the subscriber stays started: Start refuses and
+// a later Stop waits for it again without draining twice.
+func (s *Subscriber) Stop(ctx context.Context) error {
+	s.mu.Lock()
+	sub, draining := s.sub, s.draining
+	s.draining = sub != nil
+	s.mu.Unlock()
+	if sub == nil {
+		return nil
 	}
+	if !draining {
+		if err := sub.Drain(); err != nil {
+			return fmt.Errorf("core drain %q: %w", s.cfg.Subject, err)
+		}
+	}
+	ticker := time.NewTicker(drainPoll)
+	defer ticker.Stop()
+	for sub.IsValid() {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return fmt.Errorf("core subscriber stop: %w", ctx.Err())
+		}
+	}
+	s.mu.Lock()
+	if s.sub == sub {
+		s.sub, s.draining = nil, false
+	}
+	s.mu.Unlock()
 	s.logger.Info("subscription stopped")
 	return nil
 }

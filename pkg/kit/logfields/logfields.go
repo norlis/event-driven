@@ -4,13 +4,20 @@
 // A concept must have exactly one name across every transport and service.
 package logfields
 
+import "log/slog"
+
 // Messaging fields (OTel messaging semantic conventions).
 const (
-	KeyMessagingSystem      = "messaging.system"
-	KeyMessagingMessageID   = "messaging.message.id"        // CloudEvent ID, always
-	KeyMessagingBrokerID    = "messaging.message.broker_id" // broker-assigned ID on publish
-	KeyMessagingDestination = "messaging.destination.name"  // topic / subject / queue URL / subscription / HTTP pattern
-	KeyMessagingOutcome     = "messaging.operation.outcome" // OutcomeAcked | OutcomeNacked | OutcomeDiscarded
+	KeyMessagingSystem        = "messaging.system"
+	KeyMessagingMessageID     = "messaging.message.id"               // CloudEvent ID, always
+	KeyMessagingBrokerID      = "messaging.message.broker_id"        // broker-assigned ID on publish
+	KeyMessagingDestination   = "messaging.destination.name"         // topic / subject / queue URL / subscription / HTTP pattern
+	KeyMessagingOutcome       = "messaging.operation.outcome"        // OutcomeAcked | OutcomeNacked | OutcomeDiscarded
+	KeyCorrelationID          = "messaging.message.correlation_id"   // CloudEvents extension "correlationid", when present
+	KeyDeliveryCount          = "messaging.message.delivery_count"   // broker's 1-based delivery number, when known
+	KeyMessageBodySize        = "messaging.message.body.size"        // bytes of the raw broker payload
+	KeyDeadLetterReason       = "messaging.deadletter.reason"        // event.DeadLetterReason
+	KeyDeadLetterPublishError = "messaging.deadletter.publish_error" // why the dead-letter copy could not be published
 
 	KeyConsumerWorkers        = "messaging.consumer.workers"
 	KeyConsumerMaxOutstanding = "messaging.consumer.max_outstanding"
@@ -24,8 +31,10 @@ const (
 
 // CloudEvents attributes.
 const (
-	KeyCloudEventsType   = "cloudevents.event_type"
-	KeyCloudEventsSource = "cloudevents.event_source"
+	KeyCloudEventsType        = "cloudevents.event_type"
+	KeyCloudEventsSource      = "cloudevents.event_source"
+	KeyCloudEventsExtension   = "cloudevents.extension"    // extension name a log line is about
+	KeyCloudEventsContentMode = "cloudevents.content_mode" // binary | structured, as written on the wire
 )
 
 // General fields (ECS / OTel).
@@ -40,8 +49,8 @@ const (
 // Library domain fields.
 const (
 	KeyMuxName          = "eventmux.name"
+	KeyComponentName    = "lifecycle.component" // name a lifecycle.Group component was added with
 	KeyMuxRoutesTotal   = "eventmux.routes.total"
-	KeyMuxStopCause     = "eventmux.stop_cause"
 	KeyPayloadType      = "eventmux.payload.type"
 	KeyFilterExpression = "filter.expression"
 	KeyRetryAttempt     = "retry.attempt"
@@ -58,9 +67,16 @@ const (
 	SystemHTTP      = "http"
 )
 
+// Outcome is a messaging.operation.outcome value: the router's final decision
+// for a message, as it appears in logs.
+type Outcome string
+
 // messaging.operation.outcome values.
 const (
-	OutcomeAcked     = "acked"
-	OutcomeNacked    = "nacked"
-	OutcomeDiscarded = "discarded"
+	OutcomeAcked     Outcome = "acked"
+	OutcomeNacked    Outcome = "nacked"
+	OutcomeDiscarded Outcome = "discarded"
 )
+
+// Attr is the log attribute for o.
+func (o Outcome) Attr() slog.Attr { return slog.String(KeyMessagingOutcome, string(o)) }

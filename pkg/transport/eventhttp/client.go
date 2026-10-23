@@ -1,7 +1,8 @@
 package eventhttp
 
 import (
-	"log/slog"
+	"runtime/debug"
+	"sync"
 	"time"
 
 	"resty.dev/v3"
@@ -33,7 +34,6 @@ type RetryConfig struct {
 type clientOpts struct {
 	Timeout      time.Duration
 	Retry        *RetryConfig
-	Logger       *slog.Logger
 	UserAgent    string
 	DefaultRetry int
 }
@@ -43,12 +43,45 @@ const (
 	defaultWaitTime     = 200 * time.Millisecond
 	defaultMaxWaitTime  = 5 * time.Second
 	transientStatusFrom = 500
-
-	// defaultUserAgent identifies outbound requests issued by this package.
-	// Overrides Resty's built-in "go-resty/..." so external systems see the
-	// framework name instead of the underlying HTTP client library.
-	defaultUserAgent = "go event-driven/v1.0.0-beta.2"
 )
+
+// modulePath is this library's module, looked up in the binary's build info
+// so the User-Agent carries the version the consumer actually linked.
+const modulePath = "github.com/norlis/event-driven/v2"
+
+// defaultUserAgent identifies outbound requests issued by this package.
+// Overrides Resty's built-in "go-resty/..." so external systems see the
+// framework name and version instead of the HTTP client library.
+var defaultUserAgent = sync.OnceValue(func() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		bi = nil
+	}
+	return userAgent(bi)
+})
+
+// userAgent is "go event-driven/<version>", with the version taken from the
+// module among the dependencies (consumer binary) or from the main module
+// (this repo's own binaries); no suffix when neither is known.
+func userAgent(bi *debug.BuildInfo) string {
+	const name = "go event-driven"
+	if bi == nil {
+		return name
+	}
+	version := ""
+	if bi.Main.Path == modulePath {
+		version = bi.Main.Version
+	}
+	for _, dep := range bi.Deps {
+		if dep.Path == modulePath {
+			version = dep.Version
+		}
+	}
+	if version == "" || version == "(devel)" {
+		return name
+	}
+	return name + "/" + version
+}
 
 // newClient builds a *resty.Client with the package defaults. Close + drain
 // of the response body is handled internally by Resty.
@@ -91,7 +124,7 @@ func newClient(opts clientOpts) *resty.Client {
 
 	ua := opts.UserAgent
 	if ua == "" {
-		ua = defaultUserAgent
+		ua = defaultUserAgent()
 	}
 	c.SetHeader("User-Agent", ua)
 

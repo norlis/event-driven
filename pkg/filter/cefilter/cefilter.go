@@ -5,8 +5,8 @@ package cefilter
 import (
 	"strings"
 
-	"github.com/norlis/event-driven/pkg/event"
-	"github.com/norlis/event-driven/pkg/eventmux"
+	"github.com/norlis/event-driven/v2/pkg/event"
+	"github.com/norlis/event-driven/v2/pkg/eventmux"
 )
 
 // typeFilter matches messages by their CloudEvent type attribute.

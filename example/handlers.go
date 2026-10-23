@@ -2,12 +2,13 @@ package example
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
 
-	"github.com/norlis/event-driven/pkg/eventmux/metadata"
+	"github.com/norlis/event-driven/v2/pkg/eventmux/metadata"
 )
 
 // Person is the demo domain object the handlers receive.
@@ -26,8 +27,8 @@ var (
 // UseCase is the application logic invoked by every route in this example.
 // Execute is wired to Pub/Sub routes; Command is wired to HTTP routes.
 type UseCase interface {
-	Execute(ctx context.Context, evt Person) (json.RawMessage, error)
-	Command(ctx context.Context, evt Person) (json.RawMessage, error)
+	Execute(ctx context.Context, evt Person) (jsontext.Value, error)
+	Command(ctx context.Context, evt Person) (jsontext.Value, error)
 }
 
 type handler struct {
@@ -39,7 +40,7 @@ func NewHandler(logger *slog.Logger) UseCase {
 	return &handler{logger: logger}
 }
 
-func (h *handler) Execute(ctx context.Context, evt Person) (json.RawMessage, error) {
+func (h *handler) Execute(ctx context.Context, evt Person) (jsontext.Value, error) {
 	evt.Age += 10
 	if store, ok := metadata.FromContext(ctx); ok {
 		store.Set("eventName", "execute")
@@ -48,7 +49,7 @@ func (h *handler) Execute(ctx context.Context, evt Person) (json.RawMessage, err
 	return json.Marshal(evt) //nolint:wrapcheck
 }
 
-func (h *handler) Command(ctx context.Context, evt Person) (json.RawMessage, error) {
+func (h *handler) Command(ctx context.Context, evt Person) (jsontext.Value, error) {
 	if store, ok := metadata.FromContext(ctx); ok {
 		store.Set("eventName", "command")
 		store.Set("name", evt.Name)

@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -10,54 +11,48 @@ import (
 
 	"github.com/norlis/httpgate/trace"
 
-	"github.com/norlis/event-driven/pkg/event"
-	"github.com/norlis/event-driven/pkg/kit/logfields"
+	"github.com/norlis/event-driven/v2/pkg/event"
+	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
 )
 
 // PublisherConfig configures a Publisher.
 type PublisherConfig struct {
-	ProjectID string
-	TopicID   string
-
-	// Marshaler converts a CloudEvent into a Pub/Sub *Message. Default:
-	// DefaultMarshaler{} — propagates CE attributes as message attributes
-	// prefixed with "ce-".
-	Marshaler Marshaler
+	TopicID string
 }
 
 // Publisher publishes CloudEvents to a Pub/Sub topic. It satisfies
 // eventmux.Publisher.
 type Publisher struct {
-	client *gpubsub.Client
+	pub    *gpubsub.Publisher
 	cfg    PublisherConfig
 	logger *slog.Logger
 }
 
-// NewPublisher returns a Publisher backed by the given client.
-func NewPublisher(client *gpubsub.Client, cfg PublisherConfig, logger *slog.Logger) *Publisher {
-	if cfg.Marshaler == nil {
-		cfg.Marshaler = DefaultMarshaler{}
+// NewPublisher validates cfg and creates the topic publisher once, so the
+// SDK's batching and flow control apply across messages. Call Close to
+// flush and release its goroutines.
+func NewPublisher(client *gpubsub.Client, cfg PublisherConfig, logger *slog.Logger) (*Publisher, error) {
+	if client == nil {
+		return nil, errors.New("pubsub: client is nil")
 	}
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
+	if cfg.TopicID == "" {
+		return nil, errors.New("pubsub: PublisherConfig.TopicID is empty")
 	}
-	logger = logger.With(
-		slog.String(logfields.KeyLogLogger, "pubsub-publisher"),
-		slog.String(logfields.KeyMessagingSystem, logfields.SystemGCPPubSub),
-		slog.String(logfields.KeyMessagingDestination, cfg.TopicID),
-	)
-	return &Publisher{
-		client: client,
-		cfg:    cfg,
-		logger: logger,
-	}
+	logger = logfields.Transport(logger, "pubsub-publisher", logfields.SystemGCPPubSub, cfg.TopicID)
+	return &Publisher{pub: client.Publisher(cfg.TopicID), cfg: cfg, logger: logger}, nil
+}
+
+// Close flushes pending messages and stops the publisher; Publish fails afterwards.
+func (p *Publisher) Close() error {
+	p.pub.Stop()
+	return nil
 }
 
 // Publish sends ce to the configured topic.
 func (p *Publisher) Publish(ctx context.Context, ce cloudevents.Event) error {
 	tc, hasTrace := event.InjectTraceFromContext(ctx, &ce)
 
-	msg, err := p.cfg.Marshaler.Marshal(ce)
+	msg, err := marshal(ce)
 	if err != nil {
 		return fmt.Errorf("pubsub marshal: %w", err)
 	}
@@ -68,11 +63,7 @@ func (p *Publisher) Publish(ctx context.Context, ce cloudevents.Event) error {
 		msg.Attributes[trace.Header] = tc.Traceparent()
 	}
 
-	publisher := p.client.Publisher(p.cfg.TopicID)
-	defer publisher.Stop()
-
-	result := publisher.Publish(ctx, msg)
-	id, err := result.Get(ctx)
+	id, err := p.pub.Publish(ctx, msg).Get(ctx)
 	if err != nil {
 		// No log here: the caller (mux publishResult or the consuming service)
 		// owns the single error log for this operation.

@@ -5,17 +5,14 @@
 //	awsCfg, _ := aws.NewConfig()
 //	client := awssqs.NewFromConfig(*awsCfg)
 //
-//	// Full URL (Terraform/env var) — no STS call needed.
+//	// Full URL (Terraform/env var) — used as-is.
 //	sub, err := sqs.NewSubscriber(client, sqs.SubscriberConfig{
 //	    Queue:          "https://sqs.us-east-1.amazonaws.com/123/orders",
 //	    ConsumeWorkers: 4,
 //	}, logger)
 //
-//	// Or queue name — region from awsCfg, account from STS GetCallerIdentity.
-//	sub, err := sqs.NewSubscriber(client, sqs.SubscriberConfig{
-//	    Queue:    "orders",
-//	    Identity: &aws.Identity{Config: awsCfg},
-//	}, logger)
+//	// Or queue name — resolved with GetQueueUrl at Start (no STS, any partition).
+//	sub, err := sqs.NewSubscriber(client, sqs.SubscriberConfig{Queue: "orders"}, logger)
 //
 // For SNS→SQS fan-out, ensure the SNS subscription has
 // RawMessageDelivery=true so payloads arrive without the Notification envelope.
@@ -37,59 +34,46 @@ import (
 	"github.com/norlis/httpgate/logging"
 	"github.com/norlis/httpgate/trace"
 
-	"github.com/norlis/event-driven/pkg/event"
-	"github.com/norlis/event-driven/pkg/kit/logfields"
-	"github.com/norlis/event-driven/pkg/transport/aws"
+	"github.com/norlis/event-driven/v2/pkg/event"
+	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
+	"github.com/norlis/event-driven/v2/pkg/transport/internal/envelope"
 )
 
 // QueueURL is an SQS queue URL (e.g.
 // "https://sqs.us-east-1.amazonaws.com/123456789012/orders").
 type QueueURL string
 
-// NoSleep is a sentinel returned by the receive loop to skip the backoff sleep
-// and immediately start the next iteration.
-const NoSleep = -1 * time.Nanosecond
+// DefaultAckTimeout bounds DeleteMessage when SubscriberConfig.AckTimeout is 0.
+const DefaultAckTimeout = 5 * time.Second
 
 // GenerateReceiveMessageInputFunc builds the ReceiveMessage request. Override
 // to tune AttributeNames, MessageSystemAttributeNames, etc.
 type GenerateReceiveMessageInputFunc func(queueURL QueueURL) *awssqs.ReceiveMessageInput
 
 // GenerateReceiveMessageInputDefault returns long-polling defaults: 20s wait,
-// up to 10 messages per call, all user message attributes returned.
+// up to 10 messages per call, all user message attributes and the
+// ApproximateReceiveCount system attribute (eventmux.Config.MaxRetries needs
+// it; a custom GenerateReceiveMessageInput must request it too).
 func GenerateReceiveMessageInputDefault(queueURL QueueURL) *awssqs.ReceiveMessageInput {
 	return &awssqs.ReceiveMessageInput{
-		QueueUrl:              awssdk.String(string(queueURL)),
-		WaitTimeSeconds:       20,
-		MaxNumberOfMessages:   10,
-		MessageAttributeNames: []string{"All"},
-	}
-}
-
-// GenerateDeleteMessageInputFunc builds the DeleteMessage request.
-type GenerateDeleteMessageInputFunc func(queueURL QueueURL, receiptHandle string) *awssqs.DeleteMessageInput
-
-// GenerateDeleteMessageInputDefault returns the minimal DeleteMessage input.
-func GenerateDeleteMessageInputDefault(queueURL QueueURL, receiptHandle string) *awssqs.DeleteMessageInput {
-	return &awssqs.DeleteMessageInput{
-		QueueUrl:      awssdk.String(string(queueURL)),
-		ReceiptHandle: awssdk.String(receiptHandle),
+		QueueUrl:                    awssdk.String(string(queueURL)),
+		WaitTimeSeconds:             20,
+		MaxNumberOfMessages:         10,
+		MessageAttributeNames:       []string{"All"},
+		MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameApproximateReceiveCount},
 	}
 }
 
 // SubscriberConfig configures a Subscriber.
 type SubscriberConfig struct {
 	// Queue accepts either a full URL ("https://sqs....") used as-is, or a
-	// queue name. With a name, the URL is built from Identity.Region() and
-	// Identity.AccountID() (cached after the first STS lookup).
+	// queue name resolved with GetQueueUrl at Start.
 	Queue string
 
-	// Identity is required only when Queue is not already a URL. When Queue
-	// is a full URL, Identity is unused and may be nil.
-	Identity *aws.Identity
-
-	// Unmarshaler converts an SQS message into a CloudEvent. Default:
-	// DefaultUnmarshaler{}.
-	Unmarshaler Unmarshaler
+	// AckTimeout bounds each DeleteMessage (the ack). It runs on its own
+	// context so a shutdown never cancels the ack of a message already
+	// processed. Default: DefaultAckTimeout.
+	AckTimeout time.Duration
 
 	// ConsumeWorkers is the number of goroutines polling the queue in
 	// parallel. Default: 1.
@@ -102,10 +86,6 @@ type SubscriberConfig struct {
 	// GenerateReceiveMessageInput builds each ReceiveMessage request.
 	// Default: GenerateReceiveMessageInputDefault.
 	GenerateReceiveMessageInput GenerateReceiveMessageInputFunc
-
-	// GenerateDeleteMessageInput builds each DeleteMessage request.
-	// Default: GenerateDeleteMessageInputDefault.
-	GenerateDeleteMessageInput GenerateDeleteMessageInputFunc
 }
 
 // Subscriber polls an SQS queue and emits decoded CloudEvents through the
@@ -115,13 +95,13 @@ type Subscriber struct {
 	cfg    SubscriberConfig
 	logger *slog.Logger
 
-	closeOnce sync.Once
-	closing   chan struct{}
-	wg        sync.WaitGroup
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // NewSubscriber validates config and returns a Subscriber. Call Start to begin
-// polling; it blocks until ctx is cancelled or Close is invoked.
+// polling and Stop to drain.
 func NewSubscriber(client *awssqs.Client, cfg SubscriberConfig, logger *slog.Logger) (*Subscriber, error) {
 	if client == nil {
 		return nil, errors.New("aws/sqs: client is nil")
@@ -129,8 +109,11 @@ func NewSubscriber(client *awssqs.Client, cfg SubscriberConfig, logger *slog.Log
 	if cfg.Queue == "" {
 		return nil, errors.New("aws/sqs: SubscriberConfig.Queue is empty")
 	}
-	if cfg.Unmarshaler == nil {
-		cfg.Unmarshaler = DefaultUnmarshaler{}
+	if cfg.AckTimeout < 0 {
+		return nil, fmt.Errorf("aws/sqs: SubscriberConfig.AckTimeout is negative: %s", cfg.AckTimeout)
+	}
+	if cfg.AckTimeout == 0 {
+		cfg.AckTimeout = DefaultAckTimeout
 	}
 	if cfg.ConsumeWorkers <= 0 {
 		cfg.ConsumeWorkers = 1
@@ -141,76 +124,92 @@ func NewSubscriber(client *awssqs.Client, cfg SubscriberConfig, logger *slog.Log
 	if cfg.GenerateReceiveMessageInput == nil {
 		cfg.GenerateReceiveMessageInput = GenerateReceiveMessageInputDefault
 	}
-	if cfg.GenerateDeleteMessageInput == nil {
-		cfg.GenerateDeleteMessageInput = GenerateDeleteMessageInputDefault
-	}
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
 	// The queue URL is resolved later in Start, so destination is attached there.
-	logger = logger.With(
-		slog.String(logfields.KeyLogLogger, "sqs-subscriber"),
-		slog.String(logfields.KeyMessagingSystem, logfields.SystemAWSSQS),
-	)
+	logger = logfields.Component(logger, "sqs-subscriber").With(slog.String(logfields.KeyMessagingSystem, logfields.SystemAWSSQS))
 
-	return &Subscriber{
-		client:  client,
-		cfg:     cfg,
-		logger:  logger,
-		closing: make(chan struct{}),
-	}, nil
+	return &Subscriber{client: client, cfg: cfg, logger: logger}, nil
 }
 
-// Start resolves the queue URL, spawns ConsumeWorkers goroutines and blocks
-// until ctx is cancelled or Close is called. Each worker long-polls SQS,
-// decodes messages and hands them to handler via event.NewMessage with
-// Ack (DeleteMessage) / Nack (no-op, visibility timeout handles redelivery)
-// callbacks wired in.
-func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message)) error {
-	url, err := resolveQueueURL(ctx, s.cfg.Queue, s.cfg.Identity)
+// Start resolves the queue URL (GetQueueUrl for a name: no STS, any
+// partition, and it fails fast when the queue is missing) and spawns the
+// polling workers. SQS has no fatal runtime failure: receive errors are
+// retried with backoff, so onError is never called. A second Start returns
+// event.ErrAlreadyStarted.
+func (s *Subscriber) Start(ctx context.Context, handler func(msg *event.Message), _ func(error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel != nil {
+		return event.ErrAlreadyStarted
+	}
+	url, err := s.resolveQueueURL(ctx)
 	if err != nil {
 		return err
 	}
-
-	// Scoped locally rather than assigned back to s.logger: Start may run
-	// concurrently with the workers it spawns, and a shared field would race
-	// on repeated or concurrent Start calls.
 	logger := s.logger.With(slog.String(logfields.KeyMessagingDestination, string(url)))
-	logger.Info("subscription started",
-		slog.Int(logfields.KeyConsumerWorkers, s.cfg.ConsumeWorkers))
 
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var wg sync.WaitGroup
 	for range s.cfg.ConsumeWorkers {
-		s.wg.Add(1)
-		go s.worker(ctx, logger, url, handler)
+		wg.Go(func() { s.worker(runCtx, logger, url, handler) })
 	}
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	s.cancel, s.done = cancel, done
 
-	s.wg.Wait()
-	logger.Info("subscription stopped")
+	logger.Info("subscription started", slog.Int(logfields.KeyConsumerWorkers, s.cfg.ConsumeWorkers))
 	return nil
 }
 
-// Close signals all workers to stop and waits for them to drain. Safe to call
-// multiple times.
-func (s *Subscriber) Close() error {
-	s.closeOnce.Do(func() { close(s.closing) })
-	s.wg.Wait()
+// Stop cancels the long-poll and waits for the workers, which finish the
+// batch in hand (handler + ack) before exiting, or for ctx to expire. After
+// an expired ctx the workers are still running, so the subscriber stays
+// started: Start refuses and a later Stop waits for them again.
+func (s *Subscriber) Stop(ctx context.Context) error {
+	s.mu.Lock()
+	cancel, done := s.cancel, s.done
+	s.mu.Unlock()
+	if cancel == nil {
+		return nil
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return fmt.Errorf("aws/sqs: stop: %w", ctx.Err())
+	}
+	s.mu.Lock()
+	if s.done == done {
+		s.cancel, s.done = nil, nil
+	}
+	s.mu.Unlock()
+	s.logger.Info("subscription stopped")
 	return nil
+}
+
+func (s *Subscriber) resolveQueueURL(ctx context.Context) (QueueURL, error) {
+	if strings.HasPrefix(s.cfg.Queue, "https://") {
+		return QueueURL(s.cfg.Queue), nil
+	}
+	out, err := s.client.GetQueueUrl(ctx, &awssqs.GetQueueUrlInput{QueueName: awssdk.String(s.cfg.Queue)})
+	if err != nil {
+		return "", fmt.Errorf("aws/sqs: get queue url %q: %w", s.cfg.Queue, err)
+	}
+	return QueueURL(awssdk.ToString(out.QueueUrl)), nil
 }
 
 func (s *Subscriber) worker(ctx context.Context, logger *slog.Logger, url QueueURL, handler func(msg *event.Message)) {
-	defer s.wg.Done()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.closing:
-			return
 		default:
 		}
 
-		sleep := s.receiveBatch(ctx, logger, url, handler)
-		if sleep == NoSleep {
+		sleep, wait := s.receiveBatch(ctx, logger, url, handler)
+		if !wait {
 			continue
 		}
 
@@ -218,96 +217,64 @@ func (s *Subscriber) worker(ctx context.Context, logger *slog.Logger, url QueueU
 		case <-time.After(sleep):
 		case <-ctx.Done():
 			return
-		case <-s.closing:
-			return
 		}
 	}
 }
 
 // receiveBatch performs one ReceiveMessage round-trip and dispatches each
-// message. Returns NoSleep when the loop should immediately retry, otherwise
-// the duration to back off before the next iteration.
-func (s *Subscriber) receiveBatch(ctx context.Context, logger *slog.Logger, url QueueURL, handler func(msg *event.Message)) time.Duration {
+// message. wait reports whether the loop must back off for sleep before the
+// next iteration.
+func (s *Subscriber) receiveBatch(ctx context.Context, logger *slog.Logger, url QueueURL, handler func(msg *event.Message)) (sleep time.Duration, wait bool) {
 	input := s.cfg.GenerateReceiveMessageInput(url)
 	out, err := s.client.ReceiveMessage(ctx, input)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return NoSleep
+			return 0, false
 		}
-		// Retried after backoff below; the consumer keeps running, so this is
-		// a warning, not an error.
+		// Retried after backoff; the consumer keeps running, so this is a
+		// warning, not an error.
 		logger.Warn("subscription receive failed", logging.Err(err))
-		return s.cfg.ReconnectRetrySleep
+		return s.cfg.ReconnectRetrySleep, true
 	}
-	if len(out.Messages) == 0 {
-		return NoSleep
-	}
-
 	for i := range out.Messages {
-		s.processMessage(ctx, logger, url, &out.Messages[i], handler)
+		s.processMessage(url, &out.Messages[i], handler)
 	}
-	return NoSleep
+	return 0, false
 }
 
-func (s *Subscriber) processMessage(ctx context.Context, logger *slog.Logger, url QueueURL, m *sqstypes.Message, handler func(msg *event.Message)) {
-	ce, err := s.cfg.Unmarshaler.Unmarshal(m)
-	if err != nil {
-		logger.Error(
-			"message unmarshal failed",
-			logging.Err(err),
-			slog.String(logfields.KeyMessagingBrokerID, awssdk.ToString(m.MessageId)),
-		)
-		// Leave the message: visibility timeout will redeliver.
-		return
-	}
-
+func (s *Subscriber) processMessage(url QueueURL, m *sqstypes.Message, handler func(msg *event.Message)) {
 	receiptHandle := awssdk.ToString(m.ReceiptHandle)
 	messageID := awssdk.ToString(m.MessageId)
+	ack := func() error { return s.deleteMessage(url, receiptHandle) }
 
 	var traceparent string
 	if attr, ok := m.MessageAttributes[trace.Header]; ok {
 		traceparent = awssdk.ToString(attr.StringValue)
 	}
-	msgCtx := event.ContextWithTrace(context.Background(), traceparent, &ce)
+	// Nack is a no-op: not deleting lets the visibility timeout expire and SQS redeliver.
+	delivery := event.Delivery{Ack: ack, Count: deliveryCount(m)}
 
-	ack := func() { s.deleteMessage(ctx, logger, url, receiptHandle, messageID) }
-	nack := func() {
-		// No-op: not calling DeleteMessage lets the visibility timeout expire
-		// and SQS redeliver.
+	ce, err := unmarshal(m)
+	if err != nil {
+		// The router applies the poison-message policy (dead-letter copy with
+		// the raw body, one log record, Observer) and confirms the message.
+		def := defaults
+		def.ID = messageID
+		rescue := envelope.Rescue(def, awssdk.ToString(m.MessageAttributes[contentTypeAttribute].StringValue), []byte(awssdk.ToString(m.Body)))
+		handler(event.NewUndecodable(event.ContextWithTrace(context.Background(), traceparent, nil), rescue, delivery, err))
+		return
 	}
-
-	handler(event.NewMessageWithParent(msgCtx, ce, ack, nack))
+	handler(event.NewMessage(event.ContextWithTrace(context.Background(), traceparent, &ce), ce, delivery))
 }
 
-func (s *Subscriber) deleteMessage(ctx context.Context, logger *slog.Logger, url QueueURL, receiptHandle, messageID string) {
-	input := s.cfg.GenerateDeleteMessageInput(url, receiptHandle)
-	if _, err := s.client.DeleteMessage(ctx, input); err != nil {
-		// The delete IS the ack: its failure means an already-processed
-		// message will be redelivered.
-		logger.Error(
-			"message ack failed",
-			logging.Err(err),
-			slog.String(logfields.KeyMessagingBrokerID, messageID),
-		)
+// deleteMessage is the ack. It runs on its own bounded context: the receive
+// context is cancelled during shutdown and must not take the ack down with it.
+func (s *Subscriber) deleteMessage(url QueueURL, receiptHandle string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.AckTimeout)
+	defer cancel()
+	in := &awssqs.DeleteMessageInput{QueueUrl: awssdk.String(string(url)), ReceiptHandle: awssdk.String(receiptHandle)}
+	if _, err := s.client.DeleteMessage(ctx, in); err != nil {
+		return fmt.Errorf("aws/sqs: delete message: %w", err)
 	}
-}
-
-// resolveQueueURL returns queue as-is when it already looks like a URL;
-// otherwise it builds the URL from identity.Region() + identity.AccountID().
-func resolveQueueURL(ctx context.Context, queue string, identity *aws.Identity) (QueueURL, error) {
-	if strings.HasPrefix(queue, "https://") {
-		return QueueURL(queue), nil
-	}
-	if identity == nil {
-		return "", fmt.Errorf("aws/sqs: %q is not a URL and SubscriberConfig.Identity is nil", queue)
-	}
-	region, err := identity.Region()
-	if err != nil {
-		return "", fmt.Errorf("aws/sqs: %w", err)
-	}
-	accountID, err := identity.AccountID(ctx)
-	if err != nil {
-		return "", fmt.Errorf("aws/sqs: %w", err)
-	}
-	return QueueURL(fmt.Sprintf("https://sqs.%s.amazonaws.com/%s/%s", region, accountID, queue)), nil
+	return nil
 }

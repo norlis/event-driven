@@ -6,9 +6,9 @@ import (
 	"net/http"
 
 	sdkpubsub "cloud.google.com/go/pubsub/v2"
-	"github.com/norlis/event-driven/example"
-	"github.com/norlis/event-driven/pkg/kit/fxmux"
-	"github.com/norlis/event-driven/pkg/transport/gcp/pubsub"
+	"github.com/norlis/event-driven/v2/example"
+	"github.com/norlis/event-driven/v2/pkg/kit/fxmux"
+	"github.com/norlis/event-driven/v2/pkg/transport/gcp/pubsub"
 	"github.com/norlis/httpgate/health"
 	"go.uber.org/fx"
 )
@@ -29,14 +29,17 @@ func main() {
 		fx.WithLogger(fxmux.NewLogger),
 
 		fx.Provide(example.NewLogger),
-		fx.Provide(example.NewHTTPServerMux),
+		fx.Provide(example.NewObserver),
+		fx.Provide(example.NewServeMux),
+		fx.Provide(example.NewHTTPServer),
 		fx.Provide(example.NewPubSubClient),
 		fx.Provide(example.NewHandler),
 		fx.Provide(example.NewEventPublisher),
+		fx.Provide(example.NewResultPublisher),
 		fx.Provide(fx.Annotate(example.NewHTTPSubscriber, fx.ResultTags(`name:"HTTPSubscription"`))),
 		fx.Provide(fx.Annotate(example.NewAppSubscription, fx.ResultTags(`name:"AppSubscription"`))),
 		fx.Provide(fx.Annotate(example.NewHTTPMux, fx.ResultTags(`name:"HTTPMux"`))),
-		fx.Provide(fx.Annotate(example.NewPrincipalMux, fx.ResultTags(`name:"PrincipalMux"`))),
+		fx.Provide(fx.Annotate(example.NewPubSubMux, fx.ResultTags(`name:"PubSubMux"`))),
 
 		fx.Provide(func() *health.Status { return health.NewStatus(GitHash) }),
 		fx.Provide(func(c *sdkpubsub.Client) *pubsub.HealthChecker {
@@ -49,6 +52,7 @@ func main() {
 		}),
 
 		fx.Invoke(example.RegisterEventHandlers),
+		fx.Invoke(example.BindLifecycle),
 		fx.Invoke(func(router *http.ServeMux, status *health.Status, checker *pubsub.HealthChecker) {
 			router.Handle("GET /status", status)
 			router.Handle("GET /live", health.NewProbe(nil))

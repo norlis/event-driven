@@ -8,16 +8,17 @@ import "errors"
 // Sentinel errors emitted by the eventmux pipeline. Consumers can match on
 // these with errors.Is to drive retry / acking decisions.
 var (
-	// ErrSubscriptionFailed indicates the subscription source could not be started.
-	ErrSubscriptionFailed = errors.New("failed to start subscription")
 	// ErrPublicationFailed indicates a publisher returned an error.
 	ErrPublicationFailed = errors.New("failed to publish message")
-	// ErrFilterFailed indicates a filter expression could not be evaluated.
-	ErrFilterFailed = errors.New("failed to evaluate filter expression")
-	// ErrHandlerFailed indicates the user handler returned an error.
-	ErrHandlerFailed = errors.New("handler execution failed")
 	// ErrNoRoute indicates no registered route matched the incoming message.
 	ErrNoRoute = errors.New("message does not match any route")
+	// ErrDecode indicates the payload could not be decoded into the route's type.
+	ErrDecode = errors.New("payload decode failed")
+	// ErrPanic wraps the value recovered from a panicking preflight or handler.
+	ErrPanic = errors.New("handler panicked")
+	// ErrAlreadyStarted is returned by Start on a mux or a Subscription that is
+	// already running. It lives here so transports never import eventmux.
+	ErrAlreadyStarted = errors.New("event: already started")
 )
 
 // NonRetryableError wraps an error that should not be retried.
