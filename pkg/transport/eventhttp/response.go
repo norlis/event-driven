@@ -24,7 +24,7 @@ type Response struct {
 }
 
 // JSON writes the Response as JSON. If Status is unset it defaults to 202.
-func (res *Response) JSON(w http.ResponseWriter, r *http.Request) {
+func (res *Response) JSON(w http.ResponseWriter) {
 	if res.Status == 0 {
 		res.Status = http.StatusAccepted
 	}

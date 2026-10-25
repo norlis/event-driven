@@ -11,11 +11,10 @@ import (
 )
 
 func BenchmarkResponseJSON(b *testing.B) {
-	req := httptest.NewRequestWithContext(b.Context(), http.MethodPost, "/command", http.NoBody)
 	b.ReportAllocs()
 	for b.Loop() {
 		res := Response{ID: "m1", Type: "t", CorrelationID: "c1", Timestamp: 1700000000, Instance: "/command"}
-		res.JSON(httptest.NewRecorder(), req)
+		res.JSON(httptest.NewRecorder())
 	}
 }
 
@@ -30,7 +29,7 @@ func TestResponseJSONBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	res := newResponse(ce, "POST /command", 0, "", "")
 	res.Timestamp = 1700000000
-	res.JSON(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/command", http.NoBody))
+	res.JSON(rec)
 
 	if rec.Code != http.StatusAccepted {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusAccepted)
@@ -50,7 +49,7 @@ func TestResponseJSONErrorBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	res := newResponse(ce, "POST /command", http.StatusInternalServerError, CodeHandlerFailed, GenericFailureDetail)
 	res.Timestamp = 1700000000
-	res.JSON(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/command", http.NoBody))
+	res.JSON(rec)
 
 	want := `{"id":"m1","type":"t","correlationId":"","timestamp":1700000000,"instance":"POST /command","error":"HANDLER-FAILED","detail":"The event could not be processed","status":500}`
 	if got := rec.Body.String(); got != want {
@@ -65,7 +64,7 @@ func TestResponseJSONEncodeFailureIsServerError(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	res := Response{ID: "ab\xffcd"}
-	res.JSON(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/command", http.NoBody))
+	res.JSON(rec)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)

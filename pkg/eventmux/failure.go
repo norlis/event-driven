@@ -36,13 +36,16 @@ type preflightError struct{ err error }
 func (e *preflightError) Error() string { return e.err.Error() }
 func (e *preflightError) Unwrap() error { return e.err }
 
+// panicCause turns a recovered value into the error every panic path reports.
+func panicCause(r any) error { return fmt.Errorf("%w: %v", event.ErrPanic, r) }
+
 // invoke runs the preflight chain and then the handler chain. A panic in
 // either becomes a *panicError so a bug in user code never kills the broker
 // SDK's goroutine.
 func (mux *Mux) invoke(ctx context.Context, rt *route, payload any) (data jsontext.Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = &panicError{cause: fmt.Errorf("%w: %v", event.ErrPanic, r), stack: debug.Stack()}
+			err = &panicError{cause: panicCause(r), stack: debug.Stack()}
 		}
 	}()
 	if _, perr := mux.preflight(ctx, payload); perr != nil {
@@ -60,7 +63,7 @@ func (mux *Mux) recoverOutsideHandler(msg *event.Message, start time.Time) {
 	if r == nil {
 		return
 	}
-	cause, stack := fmt.Errorf("%w: %v", event.ErrPanic, r), debug.Stack()
+	cause, stack := panicCause(r), debug.Stack()
 	if outcome, _ := msg.Outcome(); outcome != event.OutcomePending {
 		mux.cfg.Logger.LogAttrs(msg.Context(), slog.LevelError, "panic after message decision",
 			errorAttr(cause, stack), slog.String(logfields.KeyMessagingMessageID, msg.ID()), correlationAttr(msg))
@@ -71,7 +74,7 @@ func (mux *Mux) recoverOutsideHandler(msg *event.Message, start time.Time) {
 		// not re-raise from a deferred recover.
 		if again := recover(); again != nil {
 			mux.cfg.Logger.LogAttrs(msg.Context(), slog.LevelError, "panic while settling a panicked message",
-				errorAttr(fmt.Errorf("%w: %v", event.ErrPanic, again), debug.Stack()),
+				errorAttr(panicCause(again), debug.Stack()),
 				slog.String(logfields.KeyMessagingMessageID, msg.ID()))
 		}
 	}()

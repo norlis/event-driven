@@ -15,7 +15,6 @@ const (
 	KeyMessagingOutcome       = "messaging.operation.outcome"        // OutcomeAcked | OutcomeNacked | OutcomeDiscarded
 	KeyCorrelationID          = "messaging.message.correlation_id"   // CloudEvents extension "correlationid", when present
 	KeyDeliveryCount          = "messaging.message.delivery_count"   // broker's 1-based delivery number, when known
-	KeyMessageBodySize        = "messaging.message.body.size"        // bytes of the raw broker payload
 	KeyDeadLetterReason       = "messaging.deadletter.reason"        // event.DeadLetterReason
 	KeyDeadLetterPublishError = "messaging.deadletter.publish_error" // why the dead-letter copy could not be published
 
@@ -51,7 +50,6 @@ const (
 	KeyMuxName          = "eventmux.name"
 	KeyComponentName    = "lifecycle.component" // name a lifecycle.Group component was added with
 	KeyMuxRoutesTotal   = "eventmux.routes.total"
-	KeyPayloadType      = "eventmux.payload.type"
 	KeyFilterExpression = "filter.expression"
 	KeyRetryAttempt     = "retry.attempt"
 	KeyRetryDelay       = "retry.delay"

@@ -62,7 +62,7 @@ func (e *ErrorResponder) Respond(w http.ResponseWriter, r *http.Request, err err
 		if !rule.Match(err) {
 			continue
 		}
-		newResponse(ce, instance, rule.StatusCode, rule.ErrorCode, rule.DetailFunc(err)).JSON(w, r)
+		newResponse(ce, instance, rule.StatusCode, rule.ErrorCode, rule.DetailFunc(err)).JSON(w)
 		return true
 	}
 	return false

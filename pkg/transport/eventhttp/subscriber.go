@@ -130,7 +130,7 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 			// Client input problems are expected behaviour, not system faults.
 			h.logger.WarnContext(r.Context(), "request rejected", logging.Err(rej.cause),
 				slog.String(logfields.KeyURLFull, r.URL.Path))
-			h.respond(w, r, ce, rej.status, rej.code, rej.detail)
+			h.respond(w, ce, rej.status, rej.code, rej.detail)
 			return
 		}
 
@@ -144,24 +144,24 @@ func (h *Subscriber) Handler(handler func(msg *event.Message)) http.HandlerFunc 
 		outcome, cause := msg.Outcome()
 		switch outcome {
 		case event.OutcomeAcked:
-			h.respond(w, r, ce, http.StatusAccepted, "", "")
+			h.respond(w, ce, http.StatusAccepted, "", "")
 		case event.OutcomePending:
 			// The router returned without deciding: a router bug, never a client error.
 			h.logger.ErrorContext(msg.Context(), "router returned without outcome",
 				slog.String(logfields.KeyMessagingMessageID, ce.ID()))
-			h.respond(w, r, ce, http.StatusInternalServerError, CodeHandlerFailed, GenericFailureDetail)
+			h.respond(w, ce, http.StatusInternalServerError, CodeHandlerFailed, GenericFailureDetail)
 		default:
 			if h.errorResponder.Respond(w, r, cause, ce, h.cfg.Pattern) {
 				return
 			}
 			// For HTTP a discarded event is as unprocessed as a nacked one.
-			h.respond(w, r, ce, http.StatusInternalServerError, CodeHandlerFailed, GenericFailureDetail)
+			h.respond(w, ce, http.StatusInternalServerError, CodeHandlerFailed, GenericFailureDetail)
 		}
 	}
 }
 
-func (h *Subscriber) respond(w http.ResponseWriter, r *http.Request, ce cloudevents.Event, status int, code ErrorCode, detail string) {
-	newResponse(ce, h.cfg.Pattern, status, code, detail).JSON(w, r)
+func (h *Subscriber) respond(w http.ResponseWriter, ce cloudevents.Event, status int, code ErrorCode, detail string) {
+	newResponse(ce, h.cfg.Pattern, status, code, detail).JSON(w)
 }
 
 // extractCloudEvent tries the CloudEvents SDK first (binary and structured

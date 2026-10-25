@@ -90,3 +90,29 @@ func TestInvokeRecoversPanicWithStack(t *testing.T) {
 		t.Errorf("stack = %q, want a goroutine dump", stack)
 	}
 }
+
+func TestPanicCauseWrapsErrPanic(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		r    any
+		want string
+	}{
+		{name: "string", r: "boom", want: "handler panicked: boom"},
+		{name: "error", r: errors.New("db down"), want: "handler panicked: db down"},
+		{name: "int", r: 42, want: "handler panicked: 42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := panicCause(tt.r)
+			if !errors.Is(got, event.ErrPanic) {
+				t.Errorf("panicCause(%v) does not wrap ErrPanic", tt.r)
+			}
+			if got.Error() != tt.want {
+				t.Errorf("panicCause(%v) = %q, want %q", tt.r, got.Error(), tt.want)
+			}
+		})
+	}
+}
