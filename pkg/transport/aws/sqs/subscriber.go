@@ -251,8 +251,10 @@ func (s *Subscriber) processMessage(url QueueURL, m *sqstypes.Message, handler f
 	if attr, ok := m.MessageAttributes[trace.Header]; ok {
 		traceparent = awssdk.ToString(attr.StringValue)
 	}
-	// Nack is a no-op: not deleting lets the visibility timeout expire and SQS redeliver.
-	delivery := event.Delivery{Ack: ack, Count: deliveryCount(m)}
+	// Nack is a no-op: not deleting lets the visibility timeout expire and SQS
+	// redeliver. It must not be nil: a nil Nack tells the router the broker
+	// cannot redeliver, which would dead-letter every retryable failure.
+	delivery := event.Delivery{Ack: ack, Nack: func() error { return nil }, Count: deliveryCount(m)}
 
 	ce, err := unmarshal(m)
 	if err != nil {

@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.0-rc.3 (unreleased)
+
+Changes since `v2.0.0-rc.2`.
+
+### Fixed
+
+- `aws/sqs.Subscriber`: every message now carries a `Delivery.Nack` (a no-op: not deleting lets the visibility timeout redeliver). In rc.2 it was nil, so the router treated SQS as a transport that cannot redeliver: every retryable handler error was discarded on the first delivery with reason `noredelivery` (copied to `Config.DeadLetter` when set, otherwise only logged) instead of being retried, and `Config.MaxRetries` never applied to SQS.
+
 ## v2.0.0-rc.1 (unreleased)
 
 Changes since `v1.0.0-rc.1`.

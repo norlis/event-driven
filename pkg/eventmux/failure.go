@@ -19,7 +19,7 @@ import (
 	"github.com/norlis/event-driven/v2/pkg/kit/logfields"
 )
 
-// panicError marks a recovered panic so classify can tell it apart. Never
+// panicError marks a recovered panic so classigit sfy can tell it apart. Never
 // escapes the mux: Outcome() exposes cause.
 type panicError struct {
 	cause error
