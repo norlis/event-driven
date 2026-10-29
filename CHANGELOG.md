@@ -1,6 +1,19 @@
 # Changelog
 
-## v2.0.0-rc.3 (unreleased)
+## v2.0.0-rc.4 (unreleased)
+
+Changes since `v2.0.0-rc.3`.
+
+### Incompatible
+
+- `pkg/kit/httpserver` is removed: httpgate v1.5.0 ships the same component as `server.Component`. Migration: `httpserver.New(mux, logger, opts...)` → `server.NewComponent(server.New(mux, opts...), logger)`. Log changes: `http server started` → `server listening` (same `server.address` field); a nil logger now means `slog.Default()` instead of discarding; `net/http` internal errors go through the logger; error prefixes are `server: listen`, `server: serve` and `server: graceful shutdown`.
+- A component failure after startup is logged once, by whoever receives it: a component with an `onFatal`/`onError` forwards it without logging, and logs it only when that callback is nil (the httpgate `server.Component` policy). `eventmux.Mux` no longer logs `subscription failed` when `Start` gets an `onError`; `fxmux.BindGroup` logs `component failed` (ERROR, wrapping `lifecycle.ErrComponentFailed` and the component name) before asking fx to shut down. Callers of `lifecycle.Group.Run` must log the returned error, `ErrComponentFailed` included.
+
+### Changed
+
+- `github.com/norlis/httpgate` v1.3.0 → v1.5.0. Inherited changes: `server.New` defaults to `ReadTimeout` 30 s, `WriteTimeout` 60 s and `MaxHeaderBytes` 64 KiB, with HTTP/2 limits; `health.Probe` no longer puts checker errors in the response body (opt in with `health.WithErrorDetails()`); `error.stack_trace` no longer starts with `goroutine N [running]:`.
+
+## v2.0.0-rc.3 - 2026-10-26
 
 Changes since `v2.0.0-rc.2`.
 
@@ -8,7 +21,15 @@ Changes since `v2.0.0-rc.2`.
 
 - `aws/sqs.Subscriber`: every message now carries a `Delivery.Nack` (a no-op: not deleting lets the visibility timeout redeliver). In rc.2 it was nil, so the router treated SQS as a transport that cannot redeliver: every retryable handler error was discarded on the first delivery with reason `noredelivery` (copied to `Config.DeadLetter` when set, otherwise only logged) instead of being retried, and `Config.MaxRetries` never applied to SQS.
 
-## v2.0.0-rc.1 (unreleased)
+## v2.0.0-rc.2 - 2026-10-25
+
+Changes since `v2.0.0-rc.1`.
+
+### Incompatible
+
+- `eventhttp.Response.JSON` takes only the `http.ResponseWriter`; the request was never read. `logfields.KeyMessageBodySize` and `logfields.KeyPayloadType` are removed: nothing emitted them.
+
+## v2.0.0-rc.1 - 2026-10-23
 
 Changes since `v1.0.0-rc.1`.
 
@@ -17,7 +38,6 @@ Changes since `v1.0.0-rc.1`.
 - Module path is `github.com/norlis/event-driven/v2`. Update every import to `github.com/norlis/event-driven/v2/pkg/...`.
 - `eventmux.Publisher` is now `Publish(ctx context.Context, ce cloudevents.Event) error`. Every transport publisher honours the context's cancellation and deadline for the outbound call and reads the W3C trace context from it.
 - Logging follows the platform logging standard through [`httpgate/logging`](https://github.com/norlis/httpgate): OTel field names (`messaging.message.id`, `messaging.destination.name`, `cloudevents.event_type`, `log.logger`, …), structured `error.type` / `error.message` / `error.stack_trace` objects and fixed lowercase messages. Every key and message from v1 (`id`, `totalRoutes`, `Route registered`, `Mux starting subscription...`, …) changed: update dashboards and alerts. The catalog is in `docs/superpowers/specs/2026-08-12-logging-standard-design.md`.
-- `eventhttp.Response.JSON` takes only the `http.ResponseWriter`; the request was never read. `logfields.KeyMessageBodySize` and `logfields.KeyPayloadType` are removed: nothing emitted them.
 - `Mux.Register`, `eventmux.Wrap` and `eventmux.Route` are removed; `Mux.Handle[T](pub, filter, func(context.Context, T) (jsontext.Value, error))` replaces them. The payload type comes from the handler, so a mismatch is impossible; a payload that does not decode is dead-lettered with reason `decode` as before.
 - `Handle`, `Use` and `UsePreflight` panic when called after `Start` (`eventmux: <method> after Start`), and a second `Handle` with the same filter panics (`eventmux: duplicate route`) whatever its publisher: the first matching route wins, so the second one could never run. Middleware chains are built once at `Start`.
 - Middleware order is documented as it always worked: the first middleware passed to `Use` (or `Chain`) is the outermost. The README example now registers `skiperr` before `retry`.

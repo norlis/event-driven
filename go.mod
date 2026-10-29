@@ -15,7 +15,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/jmespath/go-jmespath v0.4.0
 	github.com/nats-io/nats.go v1.55.0
-	github.com/norlis/httpgate v1.3.0
+	github.com/norlis/httpgate v1.5.0
 	go.uber.org/fx v1.24.0
 	google.golang.org/api v0.308.0
 	google.golang.org/grpc v1.84.0

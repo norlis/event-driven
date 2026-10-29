@@ -521,7 +521,7 @@ func TestLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("subscription failure is logged and forwarded", func(t *testing.T) {
+	t.Run("subscription failure is forwarded, not logged", func(t *testing.T) {
 		t.Parallel()
 		logs := &bytes.Buffer{}
 		sub := newFakeSubscription()
@@ -533,6 +533,19 @@ func TestLifecycle(t *testing.T) {
 		if !errors.Is(got, errBoom) {
 			t.Errorf("onError got %v, want %v", got, errBoom)
 		}
+		// The receiver of onError logs it: a record here would be a duplicate.
+		if strings.Contains(logs.String(), `"msg":"subscription failed"`) {
+			t.Errorf("subscription failure logged with an onError: %s", logs.String())
+		}
+	})
+
+	t.Run("subscription failure is logged without onError", func(t *testing.T) {
+		t.Parallel()
+		logs := &bytes.Buffer{}
+		sub := newFakeSubscription()
+		mux, _ := New(Config{Subscription: sub, Logger: slog.New(slog.NewJSONHandler(logs, nil))})
+		_ = mux.Start(t.Context(), nil)
+		sub.onError(errors.New("receive died"))
 		if line := logLine(t, logs.String(), "subscription failed"); !strings.Contains(line, `"level":"ERROR"`) || !strings.Contains(line, `"`+logging.KeyErrorMessage+`":"receive died"`) {
 			t.Errorf("subscription failed log = %s, want ERROR with the cause", line)
 		}

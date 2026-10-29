@@ -174,8 +174,8 @@ func (mux *Mux) mustBeOpen(method string) {
 
 // Start establishes the subscription and returns; a setup failure is
 // returned synchronously. onError (may be nil) is called when the
-// subscription later fails for good; the mux logs the failure either way. It
-// must not block; calling Stop from it is safe. A second Start returns
+// subscription later fails for good and logs it; with a nil onError the mux
+// logs it instead, so the failure is reported exactly once. It must not block; calling Stop from it is safe. A second Start returns
 // event.ErrAlreadyStarted.
 func (mux *Mux) Start(ctx context.Context, onError func(error)) error {
 	mux.mu.Lock()
@@ -239,10 +239,11 @@ func (mux *Mux) Stop(ctx context.Context) error {
 
 func (mux *Mux) subscriptionFailed(onError func(error)) func(error) {
 	return func(err error) {
-		mux.cfg.Logger.Error("subscription failed", logging.Err(err))
-		if onError != nil {
-			onError(err)
+		if onError == nil {
+			mux.cfg.Logger.Error("subscription failed", logging.Err(err))
+			return
 		}
+		onError(err)
 	}
 }
 

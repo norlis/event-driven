@@ -38,7 +38,6 @@ components:
   # Kit
   logfields:  { in: pkg/kit/logfields }
   lifecycle:  { in: pkg/kit/lifecycle }
-  httpserver: { in: pkg/kit/httpserver }
   fxmux:      { in: pkg/kit/fxmux }
   # Aplicación
   example:    { in: [example, example/**] }
@@ -52,7 +51,6 @@ vendors:
   cloudevents:     { in: [github.com/cloudevents/sdk-go/v2/**] }
   httpgate-log:    { in: [github.com/norlis/httpgate/logging] }
   httpgate-trace:  { in: [github.com/norlis/httpgate/trace] }
-  httpgate-server: { in: [github.com/norlis/httpgate/server] }
   fx:              { in: [go.uber.org/fx, go.uber.org/fx/**] }
   jmespath:        { in: [github.com/jmespath/go-jmespath] }
   validator:       { in: [github.com/go-playground/validator/v10] }
@@ -108,8 +106,6 @@ deps:
     canUse: [nats]
 
   # --- Kit: nunca importa el router; *eventmux.Mux cumple Component por forma ---
-  httpserver:
-    canUse: [httpgate-log, httpgate-server]
   fxmux:
     mayDependOn: [lifecycle]
     canUse: [fx, httpgate-log]

@@ -14,8 +14,9 @@ import (
 )
 
 // Component is anything with a start/stop lifecycle. onFatal reports a
-// failure that ends the component for good after Start returned; nil is
-// tolerated. *eventmux.Mux satisfies Component as is (the package does not
+// failure that ends the component for good after Start returned, and whoever
+// receives it logs it; with a nil onFatal the component logs it itself, so a
+// failure is reported exactly once. *eventmux.Mux satisfies Component as is (the package does not
 // import it: the test file asserts it).
 type Component interface {
 	Start(ctx context.Context, onFatal func(error)) error

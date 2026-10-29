@@ -17,7 +17,6 @@ import (
 
 	"github.com/norlis/event-driven/v2/pkg/eventmux"
 	"github.com/norlis/event-driven/v2/pkg/kit/fxmux"
-	"github.com/norlis/event-driven/v2/pkg/kit/httpserver"
 	"github.com/norlis/event-driven/v2/pkg/kit/lifecycle"
 	"github.com/norlis/event-driven/v2/pkg/middleware/skiperr"
 	"github.com/norlis/event-driven/v2/pkg/middleware/validate"
@@ -184,8 +183,8 @@ func NewPubSubMux(subs SubscriptionParams, logger *slog.Logger, obs eventmux.Obs
 func NewServeMux() *http.ServeMux { return http.NewServeMux() }
 
 // NewHTTPServer serves mux on HTTP_ADDR (default ":8880").
-func NewHTTPServer(mux *http.ServeMux, logger *slog.Logger) *httpserver.Server {
-	return httpserver.New(mux, logger, server.WithAddr(getenvDefault(envHTTPAddr, ":8880")))
+func NewHTTPServer(mux *http.ServeMux, logger *slog.Logger) *server.Component {
+	return server.NewComponent(server.New(mux, server.WithAddr(getenvDefault(envHTTPAddr, ":8880"))), logger)
 }
 
 // LifecycleParams collects everything BindLifecycle starts and stops.
@@ -196,7 +195,7 @@ type LifecycleParams struct {
 	Publisher *pubsub.Publisher
 	HTTPMux   *eventmux.Mux `name:"HTTPMux"`
 	PubSubMux *eventmux.Mux `name:"PubSubMux"`
-	Server    *httpserver.Server
+	Server    *server.Component
 }
 
 // BindLifecycle fixes the start/stop order in one place, whatever order fx

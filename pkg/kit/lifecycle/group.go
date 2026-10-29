@@ -34,9 +34,8 @@ type member struct {
 }
 
 // Group starts components in Add order and stops them in reverse. It logs
-// only its own DEBUG start/stop records: each component already logs its
-// failures, and the group returns them to the caller instead of logging them
-// a second time.
+// only its own DEBUG start/stop records: component failures go to onFatal or
+// are returned, and the caller logs them.
 type Group struct {
 	logger          *slog.Logger
 	shutdownTimeout time.Duration

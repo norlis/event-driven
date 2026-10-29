@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -37,7 +36,6 @@ import (
 
 	"github.com/norlis/event-driven/v2/pkg/eventmux"
 	"github.com/norlis/event-driven/v2/pkg/filter/cefilter"
-	"github.com/norlis/event-driven/v2/pkg/kit/httpserver"
 	"github.com/norlis/event-driven/v2/pkg/kit/lifecycle"
 	"github.com/norlis/event-driven/v2/pkg/middleware/validate"
 	"github.com/norlis/event-driven/v2/pkg/transport/eventhttp"
@@ -105,11 +103,7 @@ func main() {
 	logger := newLogger()
 
 	if err := run(logger); err != nil {
-		// A component failure was already logged by the component itself
-		// ("subscription failed", "http server failed"): log only the rest.
-		if !errors.Is(err, lifecycle.ErrComponentFailed) {
-			logger.Error("app stopped", logging.Err(err))
-		}
+		logger.Error("app stopped", logging.Err(err))
 		os.Exit(1)
 	}
 }
@@ -158,7 +152,7 @@ func run(logger *slog.Logger) error {
 	g.Add("nats", conn)
 	g.Add(natsMux.Name(), natsMux)
 	g.Add(httpMux.Name(), httpMux)
-	g.Add("http-server", httpserver.New(serveMux, logger, server.WithAddr(getenvDefault(envHTTPAddr, ":8080"))))
+	g.Add("http-server", server.NewComponent(server.New(serveMux, server.WithAddr(getenvDefault(envHTTPAddr, ":8080"))), logger))
 	return g.Run(context.Background()) //nolint:wrapcheck // lifecycle errors already name the component
 }
 

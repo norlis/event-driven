@@ -1,9 +1,12 @@
 package fxmux
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -115,13 +118,14 @@ func TestBindGroupStartError(t *testing.T) {
 
 func TestBindGroupFatalShutsDown(t *testing.T) {
 	t.Parallel()
+	var logs bytes.Buffer
 	comp := &fakeComp{name: "a", rec: &recorder{}}
 	app := fxtest.New(t,
 		fx.NopLogger,
 		fx.Invoke(func(lc fx.Lifecycle, sd fx.Shutdowner) {
 			g := lifecycle.NewGroup(nil, 0)
 			g.Add("a", comp)
-			BindGroup(lc, sd, g, nil)
+			BindGroup(lc, sd, g, slog.New(slog.NewJSONHandler(&logs, nil)))
 		}),
 	)
 	app.RequireStart()
@@ -132,6 +136,9 @@ func TestBindGroupFatalShutsDown(t *testing.T) {
 	case sig := <-app.Wait():
 		if sig.ExitCode != 1 {
 			t.Errorf("ExitCode = %d, want 1", sig.ExitCode)
+		}
+		if n := strings.Count(logs.String(), `"msg":"component failed"`); n != 1 || !strings.Contains(logs.String(), "boom") {
+			t.Errorf("logged %d component failed records, want 1 with the cause: %s", n, logs.String())
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no shutdown after a component failure")
