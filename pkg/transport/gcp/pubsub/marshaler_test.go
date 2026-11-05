@@ -19,7 +19,7 @@ func TestMarshalBinary(t *testing.T) {
 	ce.SetExtension("attempt", int32(2))
 	_ = ce.SetData("application/avro", []byte(`x`))
 
-	m, err := marshal(ce)
+	m, err := marshal(ce, nil)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
@@ -38,5 +38,67 @@ func TestMarshalBinary(t *testing.T) {
 	}
 	if string(m.Data) != "x" {
 		t.Errorf("Data = %q, want x", m.Data)
+	}
+}
+
+func TestMarshalPlainAttributes(t *testing.T) {
+	t.Parallel()
+
+	base := cloudevents.New()
+	base.SetID("id-1")
+	base.SetSource("/s")
+	base.SetType("t")
+
+	withScope := base.Clone()
+	withScope.SetExtension("scope", "ALL")
+
+	mixedCase := base.Clone()
+	mixedCase.SetExtension("Scope", "ALL")
+
+	typed := base.Clone()
+	typed.SetExtension("attempt", int32(2))
+	typed.SetExtension("urgent", true)
+
+	tests := []struct {
+		name   string
+		ce     cloudevents.Event
+		plain  []string
+		want   map[string]string // unprefixed keys expected; must equal their ce- twin
+		absent []string          // unprefixed keys that must not exist
+	}{
+		{"extension copied", withScope, []string{"scope"}, map[string]string{"scope": "ALL"}, nil},
+		{"mixed-case extension name is stored lowercase", mixedCase, []string{"scope"}, map[string]string{"scope": "ALL"}, nil},
+		{"absent extension writes nothing", base, []string{"scope"}, nil, []string{"scope"}},
+		{"nil list keeps prefixed only", withScope, nil, nil, []string{"scope"}},
+		{"empty list keeps prefixed only", withScope, []string{}, nil, []string{"scope"}},
+		{"core attributes copied", base, []string{"type", "source", "id"}, map[string]string{"type": "t", "source": "/s", "id": "id-1"}, nil},
+		{"unset optional core attribute writes nothing", base, []string{"subject", "time"}, nil, []string{"subject", "time"}},
+		{"non-string extensions use the encoded text", typed, []string{"attempt", "urgent"}, map[string]string{"attempt": "2", "urgent": "true"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			prefixed, err := marshal(tt.ce, nil)
+			if err != nil {
+				t.Fatalf("marshal(nil) error = %v", err)
+			}
+			m, err := marshal(tt.ce, tt.plain)
+			if err != nil {
+				t.Fatalf("marshal() error = %v", err)
+			}
+			for k, v := range tt.want {
+				if m.Attributes[k] != v || m.Attributes["ce-"+k] != v {
+					t.Errorf("Attributes[%s] = %q, ce-%s = %q, want both %q", k, m.Attributes[k], k, m.Attributes["ce-"+k], v)
+				}
+			}
+			for _, k := range tt.absent {
+				if _, ok := m.Attributes[k]; ok {
+					t.Errorf("Attributes[%s] present, want absent", k)
+				}
+			}
+			if len(m.Attributes) != len(prefixed.Attributes)+len(tt.want) {
+				t.Errorf("Attributes = %v, want the %d default keys plus %d plain", m.Attributes, len(prefixed.Attributes), len(tt.want))
+			}
+		})
 	}
 }

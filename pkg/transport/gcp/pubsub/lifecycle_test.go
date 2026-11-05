@@ -16,6 +16,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/norlis/httpgate/trace"
+
 	"github.com/norlis/event-driven/v2/pkg/event"
 )
 
@@ -68,6 +70,23 @@ func TestConstructorsValidate(t *testing.T) {
 	}
 	if _, err := NewSubscriber(client, SubscriberConfig{SubscriptionID: testSub, NumGoroutines: -1}, nil); err == nil {
 		t.Error("negative NumGoroutines accepted")
+	}
+
+	for _, bad := range [][]string{
+		{""}, {"ce-scope"}, {"CE-Scope"}, {"Content-Type"}, {"traceparent"}, {"datacontenttype"}, {"googleregion"}, {"scope", "scope"},
+	} {
+		_, err := NewPublisher(client, PublisherConfig{TopicID: testTopic, PlainAttributes: bad}, nil)
+		if err == nil || !strings.HasPrefix(err.Error(), "pubsub: PlainAttributes:") {
+			t.Errorf("PlainAttributes %q: err = %v, want pubsub: PlainAttributes: error", bad, err)
+		}
+	}
+	for _, good := range [][]string{nil, {}, {"scope", "type"}, {"averyveryverylongextensionname1"}} {
+		pub, err := NewPublisher(client, PublisherConfig{TopicID: testTopic, PlainAttributes: good}, nil)
+		if err != nil {
+			t.Errorf("PlainAttributes %q rejected: %v", good, err)
+			continue
+		}
+		_ = pub.Close()
 	}
 }
 
@@ -307,5 +326,81 @@ func TestStopTimeoutKeepsSubscriberStarted(t *testing.T) {
 	defer cancel2()
 	if err := sub.Stop(stopCtx); err != nil {
 		t.Fatalf("second Stop() = %v, want nil", err)
+	}
+}
+
+func TestNewPublisherCopiesPlainAttributes(t *testing.T) {
+	t.Parallel()
+	names := []string{"scope"}
+	pub, err := NewPublisher(newFakeClient(t), PublisherConfig{TopicID: testTopic, PlainAttributes: names}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close() })
+	names[0] = "type"
+	if got := pub.cfg.PlainAttributes; len(got) != 1 || got[0] != "scope" {
+		t.Errorf("PlainAttributes = %v after caller mutation, want [scope]", got)
+	}
+}
+
+// A subscription filter on the unprefixed attribute is the reason the option
+// exists: only the event published with PlainAttributes may match it.
+func TestPublishPlainAttributesMatchSubscriptionFilter(t *testing.T) {
+	t.Parallel()
+	client := newFakeClient(t)
+	const filtered = "orders-scope-all"
+	if _, err := client.SubscriptionAdminClient.CreateSubscription(t.Context(), &pubsubpb.Subscription{
+		Name:   "projects/" + testProject + "/subscriptions/" + filtered,
+		Topic:  "projects/" + testProject + "/topics/" + testTopic,
+		Filter: `attributes.scope = "ALL"`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	traced := trace.New()
+	publish := func(id string, plain []string) {
+		t.Helper()
+		pub, err := NewPublisher(client, PublisherConfig{TopicID: testTopic, PlainAttributes: plain}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = pub.Close() }()
+		ce := cloudevents.New()
+		ce.SetID(id)
+		ce.SetSource("/test")
+		ce.SetType("test.event")
+		ce.SetExtension("scope", "ALL")
+		_ = ce.SetData(cloudevents.ApplicationJSON, []byte(`{}`))
+		// A trace in the context makes the transport write its own traceparent.
+		if err := pub.Publish(trace.NewContext(t.Context(), traced), ce); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("prefixed-only", nil)
+	publish("plain", []string{"scope"})
+
+	sub, err := NewSubscriber(client, SubscriberConfig{SubscriptionID: filtered}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan *event.Message, 2)
+	if err := sub.Start(t.Context(), func(m *event.Message) { _ = m.Ack(); got <- m }, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sub.Stop(context.Background()) })
+
+	select {
+	case m := <-got:
+		if m.ID() != "plain" {
+			t.Errorf("first delivered id = %q, want plain (prefixed-only must not match the filter)", m.ID())
+		}
+		if m.Extensions()["scope"] != "ALL" {
+			t.Errorf("extensions = %v, want scope=ALL", m.Extensions())
+		}
+		if tc, _ := trace.FromContext(m.Context()); tc.TraceID != traced.TraceID {
+			t.Errorf("delivered trace id = %q, want %q", tc.TraceID, traced.TraceID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("message not delivered")
 	}
 }

@@ -1,6 +1,14 @@
 # Changelog
 
-## v2.0.0-rc.4 (unreleased)
+## v2.0.0-rc.5 - 2026-11-05
+
+Changes since `v2.0.0-rc.4`.
+
+### Added
+
+- `gcp/pubsub.PublisherConfig.PlainAttributes`: CloudEvents context attributes (core or extension) also written as plain Pub/Sub attributes without the `ce-` prefix, for subscription filters (`attributes.scope = "ALL"`) and consumers outside this library that read unprefixed attributes. The `ce-` attribute is always kept, an attribute the event does not carry writes nothing, and the subscriber is unchanged (unprefixed attributes are still ignored on decode). `NewPublisher` rejects names that are not lowercase CloudEvents attribute names, `traceparent`, `datacontenttype`, names starting with `goog` (reserved by Pub/Sub) and repeated names.
+
+## v2.0.0-rc.4 - 2026-10-29
 
 Changes since `v2.0.0-rc.3`.
 
